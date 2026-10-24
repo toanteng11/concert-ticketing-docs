@@ -1,4 +1,4 @@
-# UC05 — Xem Sơ Đồ Ghế (View Seat Map)
+﻿# UC05 — Xem Sơ Đồ Ghế (View Seat Map)
 
 ## 1. Thông Tin Chung
 
@@ -125,3 +125,4 @@ Use case này cho phép khách hàng đã đến lượt trong hàng chờ xem s
 | UC05.2 — Nhận cập nhật trạng thái ghế real-time | Customer | WebSocket Server | Broadcast từ tất cả sự kiện giữ ghế/bán ghế |
 | UC05.3 — Xem thông tin chi tiết ghế | Customer | — | Hover/tap tooltip |
 | UC05.4 — Phóng to/thu nhỏ sơ đồ | Customer | — | Client-side pan & zoom |
+

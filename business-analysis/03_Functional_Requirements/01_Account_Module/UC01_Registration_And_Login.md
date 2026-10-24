@@ -1,4 +1,4 @@
-# UC01 — Đăng Ký & Đăng Nhập Tài Khoản (Registration & Login)
+﻿# UC01 — Đăng Ký & Đăng Nhập Tài Khoản (Registration & Login)
 
 ## 1. Thông Tin Chung
 
@@ -176,3 +176,4 @@ Use case này mô tả cách người dùng mới đăng ký tài khoản trên 
 | **Audit Log** | Ghi nhận mọi sự kiện: đăng nhập thành công/thất bại, đổi mật khẩu, khóa tài khoản với IP + timestamp |
 | **CAPTCHA** | reCAPTCHA v3 invisible khi phát hiện hành vi bất thường; CAPTCHA v2 visible sau 5 lần thất bại |
 | **Xác thực 2 yếu tố (2FA)** | Tùy chọn TOTP (Google Authenticator) cho tài khoản Admin và Organizer (bắt buộc), Customer (tùy chọn) |
+

@@ -1,4 +1,4 @@
-# UC14 — Quét QR Code Check-In Tại Cổng (QR Code Check-In)
+﻿# UC14 — Quét QR Code Check-In Tại Cổng (QR Code Check-In)
 
 ## 1. Thông Tin Chung
 
@@ -167,3 +167,4 @@ Mã QR hiển thị trên ứng dụng người dùng không chứa dữ liệu 
 | **UC14.4** | Check-In Thủ Công Tại Bàn Trợ Giúp (Helpdesk Override) | Gate Supervisor, Staff | Customer Service DB | Hỗ trợ vé vỡ màn hình, hết pin, đối chiếu CCCD |
 | **UC14.5** | Đồng Bộ Dữ Liệu Check-In Ngược Lên Máy Chủ | Check-in Staff App | Sync Worker Service | Hợp nhất dữ liệu offline |
 | **UC14.6** | Giám Sát Lưu Lượng Ra Vào Theo Cổng Real-Time | Gate Supervisor, Organizer | Analytics Service | Giám sát an ninh và điều tiết khán giả |
+

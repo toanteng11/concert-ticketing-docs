@@ -1,4 +1,4 @@
-# SM04 — State Machine: Ticket (Trạng Thái Vé Điện Tử)
+﻿# SM04 — State Machine: Ticket (Trạng Thái Vé Điện Tử)
 
 ## 1. Mục Đích
 
@@ -166,3 +166,4 @@ sequenceDiagram
 | **INV-TCK-03** | Khi vé `CANCELLED`, mã QR phải bị vô hiệu hóa tức thì — server từ chối toàn bộ token JWT của vé này ngay cả khi JWT chưa hết hạn `exp`. |
 | **INV-TCK-04** | Không thể phục hồi vé từ trạng thái `CANCELLED` hoặc `CHECKED` sang `ORDERED`. |
 | **INV-TCK-05** | Một `order.status = PAID` luôn có số lượng vé `ORDERED` bằng đúng số ghế trong đơn hàng (1 ghế = 1 vé). |
+

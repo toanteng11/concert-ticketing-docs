@@ -1,4 +1,4 @@
-# 01 — Tiêu Chí Nghiệm Thu & Kế Hoạch Kiểm Thử Người Dùng (Acceptance Criteria & UAT Plan)
+﻿# 01 — Tiêu Chí Nghiệm Thu & Kế Hoạch Kiểm Thử Người Dùng (Acceptance Criteria & UAT Plan)
 
 ## 1. Giới Thiệu & Mục Tiêu Nghiệm Thu (UAT Scope)
 
@@ -102,3 +102,4 @@ tuyệt đối không bán trùng ghế, bảo mật dòng tiền và sẵn sàn
 (Ký và ghi rõ họ tên)                  (Ký và ghi rõ họ tên)
 Ngày: ..../..../2026                   Ngày: ..../..../2026
 ```
+

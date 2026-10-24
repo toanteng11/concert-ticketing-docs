@@ -1,4 +1,4 @@
-# 01 — Ước Tính Lưu Lượng & Thông Lượng (Traffic & Throughput Estimation: QPS & CCU)
+﻿# 01 — Ước Tính Lưu Lượng & Thông Lượng (Traffic & Throughput Estimation: QPS & CCU)
 
 ## 1. Giới Thiệu & Bối Cảnh Tải Hệ Thống (System Load Context)
 
@@ -47,7 +47,7 @@ Trong thời điểm mở bán cao điểm ($100.000\text{ CCU}$), lưu lượng
 |---|---|---|---|---|---|---|
 | `/api/v1/queue/status` | GET | Khách hàng trong phòng chờ polling lấy vị trí thứ tự | $\frac{95.000\text{ user chờ}}{3\text{ giây}}$ | **31.667 QPS** | **38.000 QPS** | Redis Sorted Set + Edge Caching / Short-polling token |
 | `/api/v1/concerts/{id}/seat-map` | GET | Tải cấu trúc sơ đồ ghế & trạng thái ghế | $\frac{5.000\text{ user chọn}}{5\text{ giây}}$ | **1.000 QPS** | **2.500 QPS** | CDN Caching (cấu trúc tĩnh SVG) + WebSocket/SSE (trạng thái động) |
-| `/api/v1/seats/hold` | POST | Giữ ghế (Distributed Lock) | $5.000\text{ user} \times 0.2\text{ click/s}$ | **1.000 TPS** | **3.000 TPS** | Redis Cluster (`SETNX` + Lua Script) + Kafka Queue |
+| `/api/v1/seats/hold` | POST | Giữ ghế (Distributed Lock) | $5.000\text{ user} \times 0.2\text{ click/s}$ | **1.000 TPS** | **3.000 TPS** | Redis Cluster (`SETNX` + Lua Script) + spring-async Queue |
 | `/api/v1/orders/checkout` | POST | Xác nhận đặt vé & tạo mã thanh toán | $\frac{50.000\text{ vé}}{4\text{ vé/đơn}} \div (15\text{ phút} \times 60)$ | **14 TPS** | **50 – 100 TPS** | RDBMS Master Write + Transaction Isolation |
 | `/api/v1/payments/ipn` | POST | Webhook nhận kết quả từ VNPay / MoMo | Khớp với tốc độ thanh toán của khách | **14 – 25 TPS** | **60 TPS** | Idempotency Key Filter + Async Event-Driven Worker |
 | `/api/v1/tickets/check-in` | POST | Quét QR tại cổng vào sân vận động | $\frac{50.000\text{ lượt}}{7.200\text{ giây}}$ | **7 – 15 TPS** | **80 – 100 TPS** | Redis Check-in Key + Batch DB Flush + Offline Fallback |
@@ -108,3 +108,4 @@ Trong khu vực chọn ghế ($5.000\text{ CCU}$ hoạt động đồng thời):
 | **Endpoint Giữ Ghế (`/seats/hold`)** | 5 requests / 10 giây / user | Sliding Window Log | Chặn nhấp liên tục (chống spam bot click) |
 | **Endpoint Thanh Toán (`/orders/checkout`)** | 2 requests / phút / user | Fixed Window | Chống tạo đơn hàng lặp |
 | **Hàng Chờ Đầy (Queue Capacity Exceeded)** | Khi hàng chờ đạt 150.000 CCU | Load Shedding | Từ chối tiếp nhận thêm kèm thông báo: *"Hàng chờ đã đầy, vui lòng quay lại sau"* |
+

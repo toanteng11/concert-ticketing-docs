@@ -1,4 +1,4 @@
-# UC15 — Hệ Thống Thông Báo Đa Kênh (Notification System)
+﻿# UC15 — Hệ Thống Thông Báo Đa Kênh (Notification System)
 
 ## 1. Thông Tin Chung
 
@@ -26,7 +26,7 @@ Use case này đặc tả kiến trúc và quy trình xử lý của Hệ thốn
 
 | Bước | Actor / Thành phần | Hành động | Phản hồi hệ thống |
 |---|---|---|---|
-| 1 | Microservice nghiệp vụ | Phát sinh sự kiện (Event) lên Message Broker (Kafka topic: `notification.events`) kèm payload (Mã sự kiện: `ORDER_PAID_SUCCESS`, ID người nhận, Dữ liệu đơn hàng, Deduplication Key) | Message Broker tiếp nhận và lưu sự kiện vào phân vùng |
+| 1 | Microservice nghiệp vụ | Phát sinh sự kiện (Event) lên Message Broker (Spring ApplicationEvent: `notification.events`) kèm payload (Mã sự kiện: `ORDER_PAID_SUCCESS`, ID người nhận, Dữ liệu đơn hàng, Deduplication Key) | Message Broker tiếp nhận và lưu sự kiện vào phân vùng |
 | 2 | Notification Consumer | Đọc sự kiện từ topic, kiểm tra trùng lặp thông báo dựa trên `deduplication_key` trong Redis Cache (TTL = 24 giờ) | Nếu đã tồn tại key → Bỏ qua (chống spam trùng). Nếu chưa → Tiếp tục xử lý |
 | 3 | System | Tra cứu cấu hình người nhận (User Preferences): Kiểm tra quyền riêng tư, danh sách kênh đăng ký, ngôn ngữ ưa thích (vi/en) | Xác định danh sách kênh cần gửi: Email + In-App + Push Notification |
 | 4 | System | Nạp mẫu thông điệp (Notification Template), biên dịch dữ liệu động (Tên khách, Mã vé, Tên concert, Số ghế, Tổng tiền, Mã QR vé đính kèm) | Tạo nội dung hoàn chỉnh cho từng kênh |
@@ -145,3 +145,4 @@ Use case này đặc tả kiến trúc và quy trình xử lý của Hệ thốn
 | **UC15.4** | Phát Sóng Thông Báo Khẩn Cấp Sự Kiện (Broadcast) | Admin, Organizer | Bulk Dispatcher Worker | Thông báo dời lịch, hủy show, an ninh |
 | **UC15.5** | Xem & Đánh Dấu Đã Đọc Hộp Thư Thông Báo In-App | Khách hàng | Notification DB | Quản lý thông báo cá nhân trên App/Web |
 | **UC15.6** | Cấu Hình Tùy Chọn Nhận Thông Báo (Notification Prefs) | Khách hàng | User Profile Service | Quản lý kênh nhận tin và quyền riêng tư |
+

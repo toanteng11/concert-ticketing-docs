@@ -1,4 +1,4 @@
-# SM03 — State Machine: Order (Trạng Thái Đơn Hàng)
+﻿# SM03 — State Machine: Order (Trạng Thái Đơn Hàng)
 
 ## 1. Mục Đích
 
@@ -151,3 +151,4 @@ Yêu cầu:
 | **INV-ORD-04** | Số tiền `total_amount` được đóng băng tại thời điểm tạo đơn; không thể thay đổi sau đó. |
 | **INV-ORD-05** | Một đơn hàng `PAID` không được hủy nếu có bất kỳ vé nào trong đơn đã ở trạng thái `CHECKED`. |
 | **INV-ORD-06** | `order.expires_at = order.created_at + 600 seconds` (cố định, không thể gia hạn). |
+

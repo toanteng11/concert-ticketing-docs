@@ -1,4 +1,4 @@
-# UC04 — Tìm Kiếm & Lọc Concert (Browse, Search & Filter Concerts)
+﻿# UC04 — Tìm Kiếm & Lọc Concert (Browse, Search & Filter Concerts)
 
 ## 1. Thông Tin Chung
 
@@ -130,3 +130,4 @@ Use case này cho phép bất kỳ người dùng (đã đăng nhập hoặc ch�
 | UC04.3 — Lọc theo tiêu chí | Guest, Customer | — | Combine filter; URL params |
 | UC04.4 — Sắp xếp kết quả | Guest, Customer | — | Client-side sort hoặc server-side |
 | UC04.5 — Xem chi tiết concert | Guest, Customer | — | Dẫn đến UC05 |
+

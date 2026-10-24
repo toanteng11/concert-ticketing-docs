@@ -1,4 +1,4 @@
-# 08 — Quyền Riêng Tư Dữ Liệu, Nhật Ký Kiểm Toán & Lưu Trữ (Data Privacy, Audit & Retention)
+﻿# 08 — Quyền Riêng Tư Dữ Liệu, Nhật Ký Kiểm Toán & Lưu Trữ (Data Privacy, Audit & Retention)
 
 ## 1. Giới Thiệu & Khung Pháp Lý Áp Dụng
 
@@ -114,8 +114,9 @@ Mọi thao tác thay đổi dữ liệu hoặc truy cập thông tin nhạy cả
 
 | Nhóm dữ liệu | Thời gian lưu trữ nóng (Hot Storage) | Thời gian lưu trữ ấm/lạnh (Warm/Cold Archive) | Thời điểm tiêu hủy vĩnh viễn (Permanent Purge) | Căn cứ pháp lý |
 |---|---|---|---|---|
-| **Dữ liệu Đơn hàng, Hóa đơn & Đối soát** | 1 năm trong PostgreSQL | 4 năm tiếp theo trong AWS S3 Glacier | Sau đúng **5 năm** kể từ ngày quyết toán thuế | Luật Kế toán & Luật Thuế VN |
-| **Nhật ký Quét Vé Check-In tại Cổng** | 30 ngày trong PostgreSQL | 11 tháng tiếp theo trong S3 | Sau **12 tháng** kể từ khi concert kết thúc | Phục vụ đối soát & giải quyết khiếu nại |
-| **Nhật ký Kiểm toán (Audit Logs)** | 1 năm trong PostgreSQL | 4 năm trong S3 Object Lock | Sau **5 năm** | Tiêu chuẩn kiểm toán bảo mật |
+| **Dữ liệu Đơn hàng, Hóa đơn & Đối soát** | 1 năm trong MySQL 8.0 | 4 năm tiếp theo trong AWS S3 Glacier | Sau đúng **5 năm** kể từ ngày quyết toán thuế | Luật Kế toán & Luật Thuế VN |
+| **Nhật ký Quét Vé Check-In tại Cổng** | 30 ngày trong MySQL 8.0 | 11 tháng tiếp theo trong S3 | Sau **12 tháng** kể từ khi concert kết thúc | Phục vụ đối soát & giải quyết khiếu nại |
+| **Nhật ký Kiểm toán (Audit Logs)** | 1 năm trong MySQL 8.0 | 4 năm trong S3 Object Lock | Sau **5 năm** | Tiêu chuẩn kiểm toán bảo mật |
 | **Nhật ký Truy cập Mạng (Access Logs / Nginx)** | 30 ngày trong OpenSearch | 60 ngày tiếp theo dạng nén S3 | Sau **90 ngày** | Nghị định quản lý Internet & An ninh mạng |
 | **Phiên làm việc & Token Hàng chờ (Redis)** | 10 phút đến 24 giờ | Không lưu trữ | Tự động hết hạn qua cơ chế Redis TTL | Tối ưu tài nguyên In-Memory |
+

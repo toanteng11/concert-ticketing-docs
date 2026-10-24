@@ -1,4 +1,4 @@
-# SM05 — State Machine: Payment Transaction & Refund (Trạng Thái Giao Dịch Thanh Toán & Hoàn Tiền)
+﻿# SM05 — State Machine: Payment Transaction & Refund (Trạng Thái Giao Dịch Thanh Toán & Hoàn Tiền)
 
 ## 1. Mục Đích
 
@@ -189,3 +189,4 @@ flowchart LR
 | **INV-PAY-03** | `amount` lưu trong bảng là số nguyên dương (VNĐ, không dùng float). Mọi so sánh phải chính xác tuyệt đối — sai lệch 1 đồng là sự cố bảo mật nghiêm trọng. |
 | **INV-PAY-04** | Giao dịch `SUCCESS` của một `order_id` không được phép xuất hiện 2 lần (một đơn chỉ thanh toán thành công 1 lần). |
 | **INV-PAY-05** | Tổng `amount` của tất cả `REFUND` giao dịch cho một `order_id` không được vượt quá `amount` của giao dịch `PAYMENT SUCCESS` tương ứng. |
+

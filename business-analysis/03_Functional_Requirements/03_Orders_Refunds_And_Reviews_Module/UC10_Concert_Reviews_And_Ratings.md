@@ -1,4 +1,4 @@
-# UC10 — Đánh Giá & Nhận Xét Concert (Concert Reviews & Ratings)
+﻿# UC10 — Đánh Giá & Nhận Xét Concert (Concert Reviews & Ratings)
 
 ## 1. Thông Tin Chung
 
@@ -127,3 +127,4 @@ Use case này cho phép khách hàng đã thực sự tham dự concert (check-i
 | UC10.3 — Xóa đánh giá | Customer | — | Trong 30 ngày |
 | UC10.4 — Xem đánh giá concert | Guest, Customer | — | Không cần đăng nhập |
 | UC10.5 — Kiểm duyệt đánh giá vi phạm | Admin | — | Ẩn đánh giá spam/độc hại |
+

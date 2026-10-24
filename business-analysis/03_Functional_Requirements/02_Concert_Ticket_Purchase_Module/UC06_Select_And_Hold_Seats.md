@@ -1,4 +1,4 @@
-# UC06 — Chọn & Giữ Ghế (Select & Hold Seats)
+﻿# UC06 — Chọn & Giữ Ghế (Select & Hold Seats)
 
 ## 1. Thông Tin Chung
 
@@ -158,3 +158,4 @@ Use case này xử lý hành động chọn ghế trên sơ đồ và khóa gi�
 | UC06.3 — Auto-release khi hết TTL | System (Auto) | Redis Keyspace Notification | Tự động không cần user action |
 | UC06.4 — Auto-release khi mất heartbeat | System (Auto) | Redis TTL | Sau 120s không có heartbeat |
 | UC06.5 — Tiến hành đặt vé | Customer | — | Trigger UC07 |
+

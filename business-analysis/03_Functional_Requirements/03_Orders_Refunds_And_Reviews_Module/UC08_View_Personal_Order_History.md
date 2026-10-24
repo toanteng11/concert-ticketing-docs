@@ -1,4 +1,4 @@
-# UC08 — Xem Lịch Sử Đơn Hàng Cá Nhân (View Personal Order History)
+﻿# UC08 — Xem Lịch Sử Đơn Hàng Cá Nhân (View Personal Order History)
 
 ## 1. Thông Tin Chung
 
@@ -102,3 +102,4 @@ Use case này cho phép khách hàng xem toàn bộ lịch sử đơn hàng, tr�
 | UC08.4 — Xem vé điện tử & QR | Customer | QR Service | Dynamic QR rotate 60s |
 | UC08.5 — Tải vé PDF | Customer | PDF Generator Service | Static QR với chữ ký RSA |
 | UC08.6 — Hủy đơn (nếu hợp lệ) | Customer | — | Dẫn đến UC09 |
+

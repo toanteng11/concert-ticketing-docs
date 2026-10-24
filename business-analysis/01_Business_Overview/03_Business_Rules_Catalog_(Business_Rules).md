@@ -1,4 +1,4 @@
-# Danh Mục Quy Tắc Nghiệp Vụ (Business Rules Catalog)
+﻿# Danh Mục Quy Tắc Nghiệp Vụ (Business Rules Catalog)
 
 ## 1. Giới Thiệu & Mục Đích
 
@@ -407,3 +407,4 @@ Mọi lập trình viên backend, frontend, chuyên viên thiết kế dữ li�
 - **API Error Responses**: Bắt buộc trả mã lỗi có liên kết trực tiếp với Business Rule (Ví dụ: `{"error": "BUSINESS_RULE_VIOLATION", "code": "BR-SEAT-004", "message": "Bạn chỉ được chọn tối đa 4 ghế"}`).
 - **Database Triggers & Check Constraints**: Áp dụng cho các bất biến bắt buộc như `BR-SEAT-008`, `BR-ORD-003`.
 - **Automated Integration Tests**: Mỗi Business Rule phải có tối thiểu 01 Test Suite tương ứng bao gồm cả Happy Path và Edge Case / Exception Path.
+

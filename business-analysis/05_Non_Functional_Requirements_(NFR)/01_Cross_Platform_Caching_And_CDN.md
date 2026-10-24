@@ -1,4 +1,4 @@
-# 01 — Đa Nền Tảng, Chiến Lược Bộ Đệm (Caching) & CDN
+﻿# 01 — Đa Nền Tảng, Chiến Lược Bộ Đệm (Caching) & CDN
 
 ## 1. Giới Thiệu & Mục Tiêu Kỹ Thuật
 
@@ -51,7 +51,7 @@ Hệ thống triển khai 4 tầng bộ đệm kế tiếp nhau:
            └── Tầng 2: Edge CDN Cache (Cloudflare / CloudFront)
                    └── Tầng 3: API Gateway Response Cache (Kong / Envoy)
                            └── Tầng 4: Distributed In-Memory Cache (Redis Cluster)
-                                   └── [Cơ sở dữ liệu gốc (PostgreSQL Primary/Replicas)]
+                                   └── [Cơ sở dữ liệu gốc (MySQL 8.0 Primary/Replicas)]
 ```
 
 ### Chi Tiết Cấu Hình Từng Tầng Bộ Đệm
@@ -109,7 +109,7 @@ Sự cố phổ biến nhất trong hệ thống Caching là **Dữ liệu mâu 
 Hệ thống áp dụng các mô hình xử lý sau:
 
 ### 1. Mô Hình Cache-Aside (Lazy Loading) Kết Hợp Write-Through
-- Khi có yêu cầu đọc: Ứng dụng kiểm tra Redis trước. Nếu có (Cache Hit) $\rightarrow$ trả về ngay. Nếu không (Cache Miss) $\rightarrow$ đọc từ PostgreSQL Read Replica, ghi vào Redis với TTL xác định rồi trả về.
+- Khi có yêu cầu đọc: Ứng dụng kiểm tra Redis trước. Nếu có (Cache Hit) $\rightarrow$ trả về ngay. Nếu không (Cache Miss) $\rightarrow$ đọc từ MySQL 8.0 Read Replica, ghi vào Redis với TTL xác định rồi trả về.
 - Khi có thao tác sửa đổi (Organizer cập nhật concert): Service cập nhật Database thành công $\rightarrow$ Phát sự kiện Kafka `concert.updated` $\rightarrow$ Worker xóa ngay lập tức key tương ứng trong Redis (`DEL cache:concert:{id}`).
 
 ### 2. Vô Hiệu Hóa Mạng Biên Theo Thẻ (Surrogate-Key / Cache-Tag Purging)
@@ -123,5 +123,6 @@ Hệ thống áp dụng các mô hình xử lý sau:
 
 ### 3. Phòng Ngừa Hiện Tượng Sập Bộ Đệm Hàng Loạt (Cache Stampede / Thundering Herd)
 - Khi một concert cực nóng hết hạn cache trong Redis đúng lúc có 10.000 người cùng truy cập:
-  - Không để 10.000 request cùng đổ dồn xuống Database PostgreSQL.
+  - Không để 10.000 request cùng đổ dồn xuống Database MySQL 8.0.
   - **Áp dụng Mutex Lock trong Cache:** Chỉ request đầu tiên phát hiện Cache Miss được phép lấy khóa tạm (Mutex Lock trong Redis 2 giây) để truy vấn Database và cập nhật lại cache. 9.999 request còn lại tạm dừng chờ 50ms hoặc sử dụng giá trị cũ tạm thời (Stale Data Serving).
+

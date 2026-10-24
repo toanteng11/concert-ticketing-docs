@@ -1,4 +1,4 @@
-# Ma Trận Phân Quyền Người Dùng (Actor Permissions & RBAC Matrix)
+﻿# Ma Trận Phân Quyền Người Dùng (Actor Permissions & RBAC Matrix)
 
 ## 1. Giới Thiệu & Mục Đích
 
@@ -288,3 +288,4 @@ Khi người dùng đăng nhập thành công, Authentication Service cấp mộ
 3. **Chống giả mạo vai trò (Privilege Escalation):**
    - API phân quyền người dùng không chấp nhận gán vai trò (`roles`) từ tham số request của client.
    - Chỉ tài khoản có `ROLE_ADMIN` mới có thể gọi endpoint cập nhật vai trò nội bộ qua mạng VPC nội bộ được bảo vệ bởi VPN/mTLS.
+

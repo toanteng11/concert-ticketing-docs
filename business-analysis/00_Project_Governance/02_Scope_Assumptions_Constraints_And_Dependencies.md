@@ -1,4 +1,4 @@
-# Phạm Vi, Giả Định, Ràng Buộc và Phụ Thuộc
+﻿# Phạm Vi, Giả Định, Ràng Buộc và Phụ Thuộc
 
 ## Mục đích
 
@@ -94,7 +94,7 @@ Các ràng buộc cứng mà hệ thống **phải tuân thủ**:
 | Redis | Caching, session phòng chờ, giữ ghế (SET NX EX), rate limiting | Chậm hơn nhưng fallback sang DB-level lock |
 | Kafka / RabbitMQ | Message queue cho notification và xử lý bất đồng bộ | Thông báo bị trễ hoặc mất; tải đồng bộ tăng |
 | CDN (Cloudflare R2, AWS CloudFront) | Phân phối ảnh poster, banner, file vé | Tải chậm hơn cho người dùng xa server |
-| PostgreSQL | Lưu trữ chính: đơn hàng, vé, concert (ACID) | Mất dữ liệu giao dịch |
+| MySQL 8.0 | Lưu trữ chính: đơn hàng, vé, concert (ACID) | Mất dữ liệu giao dịch |
 
 ---
 
@@ -117,4 +117,5 @@ Các ràng buộc cứng mà hệ thống **phải tuân thủ**:
 - [`00_Project_Governance/03_Risks_Open_Questions_And_Decision_Log.md`](./03_Risks_Open_Questions_And_Decision_Log.md)
 - [`01_Business_Overview/02_Actor_Permissions.md`](../01_Business_Overview/02_Actor_Permissions.md)
 - [`01_Business_Overview/03_Business_Rules_Catalog_(Business_Rules).md`](../01_Business_Overview/03_Business_Rules_Catalog_(Business_Rules).md)
+
 

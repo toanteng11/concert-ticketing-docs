@@ -1,4 +1,4 @@
-# 04 — Đồng Thời & Kịch Bản Sự Cố Theo Định Lý CAP (Concurrency & CAP Theorem)
+﻿# 04 — Đồng Thời & Kịch Bản Sự Cố Theo Định Lý CAP (Concurrency & CAP Theorem)
 
 ## 1. Giới Thiệu & Ứng Dụng Định Lý CAP Trong Hệ Thống Bán Vé
 
@@ -14,7 +14,7 @@
 | **Xử Lý Thanh Toán (Payment Processing)** | **CP** (Consistency + Partition Tolerance) | **Nhất quán Giao dịch (ACID Transactions)** | Tiền bạc và dòng tiền bắt buộc phải chính xác 100%, không chấp nhận chênh lệch số dư. |
 | **Tìm Kiếm & Xem Concert (Catalog & Search)** | **AP** (Availability + Partition Tolerance) | **Nhất quán Cuối cùng (Eventual Consistency)** | Chấp nhận người dùng xem thông tin mô tả concert hoặc số lượng vé còn lại chậm hơn thực tế vài giây, đổi lại trang web luôn mở được 100%. |
 | **Đánh Giá & Nhận Xét (Reviews & Ratings)** | **AP** (Availability + Partition Tolerance) | **Nhất quán Cuối cùng (Eventual Consistency)** | Bình luận và điểm sao của khán giả có thể cập nhật sau 1–2 phút qua Message Broker. |
-| **Hệ Thống Thông Báo (Notifications)** | **AP** (Availability + Partition Tolerance) | **Nhất quán Cuối cùng (Eventual Consistency)** | Thông báo đẩy và email được xếp hàng trong Kafka, có thể trễ vài giây trong giờ cao điểm. |
+| **Hệ Thống Thông Báo (Notifications)** | **AP** (Availability + Partition Tolerance) | **Nhất quán Cuối cùng (Eventual Consistency)** | Thông báo đẩy và email được xếp hàng trong spring-async, có thể trễ vài giây trong giờ cao điểm. |
 
 ---
 
@@ -25,8 +25,8 @@
 - **Nguy cơ:** Mất khóa ghế đang giữ, dẫn đến việc người khác có thể chọn đè vào ghế vừa được giữ.
 - **Giải pháp xử lý:**
   1. **Tự động chuyển vùng (Redis Cluster Failover):** Các node Redis Replica phát hiện Master không phản hồi Heartbeat sau 3 giây, tiến hành bầu chọn (Election) và nâng một Replica lên làm Master mới.
-  2. **Bảo vệ bằng Database Source of Truth:** Mọi yêu cầu xác nhận đơn hàng bắt buộc phải kiểm tra lại trạng thái trong cơ sở dữ liệu PostgreSQL (`SELECT status FROM seats WHERE id = ? FOR UPDATE`). Nếu Redis bị mất dữ liệu khóa, PostgreSQL đóng vai trò chốt chặn cuối cùng ngăn chặn bán trùng.
-  3. **Tái lập bộ đệm (Cache Re-hydration Worker):** Ngay sau khi Master mới online, một tiến trình nền quét các bản ghi `seat_holds` đang `ACTIVE` trong PostgreSQL và đồng bộ ngược lại vào Redis.
+  2. **Bảo vệ bằng Database Source of Truth:** Mọi yêu cầu xác nhận đơn hàng bắt buộc phải kiểm tra lại trạng thái trong cơ sở dữ liệu MySQL 8.0 (`SELECT status FROM seats WHERE id = ? FOR UPDATE`). Nếu Redis bị mất dữ liệu khóa, MySQL 8.0 đóng vai trò chốt chặn cuối cùng ngăn chặn bán trùng.
+  3. **Tái lập bộ đệm (Cache Re-hydration Worker):** Ngay sau khi Master mới online, một tiến trình nền quét các bản ghi `seat_holds` đang `ACTIVE` trong MySQL 8.0 và đồng bộ ngược lại vào Redis.
 
 ---
 
@@ -41,14 +41,14 @@
 
 ---
 
-### Kịch Bản 3: Sự Cố Cơ Sở Dữ Liệu PostgreSQL Master Sập
-- **Hiện tượng:** Máy chủ PostgreSQL Primary bị lỗi phần cứng ổ cứng NVMe hoặc Kernel Panic.
+### Kịch Bản 3: Sự Cố Cơ Sở Dữ Liệu MySQL 8.0 Master Sập
+- **Hiện tượng:** Máy chủ MySQL 8.0 Primary bị lỗi phần cứng ổ cứng NVMe hoặc Kernel Panic.
 - **Nguy cơ:** Toàn bộ thao tác ghi đơn hàng và phát hành vé bị dừng lại.
 - **Giải pháp xử lý:**
   1. **Cơ chế Patroni HA Failover:**
      - Công cụ điều phối phân tán (DCS - Distributed Consensus Store dựa trên etcd) phát hiện mất tín hiệu từ Primary.
      - Sau đúng $10\text{ giây}$ (Heartbeat Timeout), Patroni phong cấp (Promote) cho Read Replica có vị trí ghi nhật ký WAL mới nhất (nhỏ nhất về Replication Lag) trở thành Primary mới.
-     - PgBouncer tự động chuyển tiếp toàn bộ luồng kết nối ghi sang node Primary mới mà không cần khởi động lại các Microservices.
+     - HikariCP / ProxySQL tự động chuyển tiếp toàn bộ luồng kết nối ghi sang node Primary mới mà không cần khởi động lại ứng dụng Modular Monolith.
   2. **Trải nghiệm người dùng:** Trong 10–15 giây chuyển giao, API Gateway trả về thông báo duyên dáng: *"Hệ thống đang đồng bộ dữ liệu giao dịch, đơn hàng của bạn đang được xử lý, vui lòng không tắt màn hình"*.
 
 ---
@@ -64,9 +64,10 @@
 
 ---
 
-### Kịch Bản 5: Hàng Đợi Kafka Bị Nghẽn Tiêu Thụ (Consumer Lag Accumulation)
+### Kịch Bản 5: Hàng Đợi spring-async Bị Nghẽn Tiêu Thụ (Consumer Lag Accumulation)
 - **Hiện tượng:** Số lượng thông báo hoặc tác vụ gửi vé tăng đột biến vượt quá tốc độ tiêu thụ của các worker tiêu thụ (Consumer Lag $> 50.000$ messages).
 - **Nguy cơ:** Trễ thông báo vé điện tử, khách hàng hoang mang vì đã trừ tiền mà chưa nhận được email xác nhận.
 - **Giải pháp xử lý:**
-  1. **Tự động mở rộng Consumer (KEDA Autoscaling):** Hệ thống giám sát chỉ số `kafka_consumer_lag`, tự động tăng số lượng Pod Consumer từ 2 lên tối đa 14 pods để tiêu thụ song song các phân vùng (Partitions).
+  1. **Tự động mở rộng Consumer (KEDA Autoscaling):** Hệ thống giám sát chỉ số `spring-async_consumer_lag`, tự động tăng số lượng Pod Consumer từ 2 lên tối đa 14 pods để tiêu thụ song song các phân vùng (Partitions).
   2. **Hàng đợi Thư Chết (Dead Letter Queue - DLQ):** Các thông điệp bị lỗi xử lý quá 3 lần (như email sai định dạng) được đẩy ngay vào topic `notification.dlq` để không làm chặn đầu các thông điệp hợp lệ phía sau.
+

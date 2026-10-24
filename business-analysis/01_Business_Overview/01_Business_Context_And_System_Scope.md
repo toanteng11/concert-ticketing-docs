@@ -1,4 +1,4 @@
-# Bối Cảnh Kinh Doanh & Phạm Vi Hệ Thống (Business Context & System Scope)
+﻿# Bối Cảnh Kinh Doanh & Phạm Vi Hệ Thống (Business Context & System Scope)
 
 ## 1. Bối Cảnh Kinh Doanh (Business Context)
 
@@ -259,3 +259,4 @@ graph TB
 | AS-04 | Mạng internet tại địa điểm tổ chức sự kiện được đảm bảo đủ băng thông cho check-in; cơ chế Offline là dự phòng khẩn cấp |
 | AS-05 | Khán giả có điện thoại thông minh hiển thị màn hình; tính năng in vé PDF là phương án dự phòng cho người cao tuổi |
 | AS-06 | Admin sẽ xử lý phê duyệt concert trong SLA 48 giờ; hệ thống cảnh báo nếu quá hạn |
+

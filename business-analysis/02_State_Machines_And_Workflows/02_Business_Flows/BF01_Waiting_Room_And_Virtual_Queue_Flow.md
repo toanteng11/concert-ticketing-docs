@@ -1,4 +1,4 @@
-# BF01 — Business Flow: Phòng Chờ Ảo & Hàng Chờ Ảo (Waiting Room & Virtual Queue)
+﻿# BF01 — Business Flow: Phòng Chờ Ảo & Hàng Chờ Ảo (Waiting Room & Virtual Queue)
 
 ## 1. Mục Đích
 
@@ -194,3 +194,4 @@ sequenceDiagram
 | `POSITION_UPDATED` | `{your_position: N}` | Vị trí cập nhật (người trước rời đi) |
 | `SALE_SOLD_OUT` | `{message: "Đã hết vé"}` | Hết vé, hàng chờ đóng |
 | `SESSION_EXPIRED` | `{reason: "INACTIVITY_TIMEOUT"}` | Phiên hết hạn do không hoạt động |
+

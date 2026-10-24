@@ -1,10 +1,10 @@
-# 02 — Xử Lý 100.000 Người Dùng Đồng Thời (Handling 100K CCU)
+﻿# 02 — Xử Lý 100.000 Người Dùng Đồng Thời (Handling 100K CCU)
 
 ## 1. Giới Thiệu & Thách Thức Kỹ Thuật
 
 Xử lý tải $100.000$ người dùng đồng thời (**100K Concurrent Users - CCU**) trong các sự kiện mở bán vé concert quy mô lớn (Mega Flash-Sale) là bài toán kỹ thuật phức tạp nhất của nền tảng. Khi $100.000$ người cùng truy cập trong một khung giờ hẹp ($T - 15$ phút đến $T + 30$ phút), hệ thống đối mặt với 4 nguy cơ hiện hữu:
 1. **Nghẽn cổng mạng & Socket cạn kiệt (File Descriptors Exhaustion):** Hệ điều hành máy chủ hết cổng kết nối hoặc rơi vào trạng thái `TIME_WAIT`.
-2. **Sập cơ sở dữ liệu quan hệ (RDBMS Connection Throttling):** Hàng chục nghìn kết nối đồng thời vượt quá giới hạn `max_connections` của PostgreSQL, làm treo cụm cơ sở dữ liệu.
+2. **Sập cơ sở dữ liệu quan hệ (RDBMS Connection Throttling):** Hàng chục nghìn kết nối đồng thời vượt quá giới hạn `max_connections` của MySQL 8.0, làm treo cụm cơ sở dữ liệu.
 3. **Hiệu ứng bầy đàn (Thundering Herd Problem):** Hàng trăm nghìn yêu cầu cùng ập vào một tài nguyên (ví dụ trang sơ đồ ghế VIP), gây sập tầng bộ nhớ đệm và lan sang toàn bộ hệ thống (Cascading Failure).
 4. **Bất công bằng cho người hâm mộ chân chính (Bot & Script Exploitation):** Các công cụ đầu cơ vé (Scalper Bots) có đường truyền siêu nhanh chiếm hết lượt trước người dùng bình thường nếu dùng cơ chế xếp hàng đến trước phục vụ trước (FIFO thô sơ).
 
@@ -23,9 +23,9 @@ Hệ thống bảo vệ tài nguyên lõi thông qua 4 lớp lá chắn tuần t
        ↓ (Lớp 2: Waiting Room Service - Điều tiết van xả lưu lượng)
 [API Gateway Cụm Kubernetes]
        ↓ (Lớp 3: Rate Limiting & Throttling - Cắt gọt tải đột biến)
-[Microservices Backend & Redis Cluster]
+[Modular Monolith Backend & Redis Cluster]
        ↓ (Lớp 4: Connection Pooling & DB Isolation - Bảo vệ RDBMS Master)
-[PostgreSQL Database]
+[MySQL 8.0 Database]
 ```
 
 ---
@@ -102,10 +102,11 @@ Khi lưu lượng truy cập vượt quá kịch bản dự kiến (ví dụ đ�
 
 ## 6. Bảo Vệ Tầng Cơ Sở Dữ Liệu Cốt Lõi (Database Protection Strategies)
 
-Để đảm bảo PostgreSQL Master không bao giờ bị nghẽn trong lúc mở bán:
+Để đảm bảo MySQL 8.0 Master không bao giờ bị nghẽn trong lúc mở bán:
 1. **Phân Tách Đọc / Ghi Tuyệt Đối (Read/Write Splitting):**
    - $100\%$ truy vấn tìm kiếm, xem danh mục concert, xem thông tin nghệ sĩ được chuyển hướng tới 2 cụm Read Replica hoặc Redis Cache.
    - Database Master chỉ phục vụ duy nhất 2 thao tác ghi giao dịch: Tạo bản ghi giữ ghế (`INSERT INTO seat_holds`) và Tạo đơn hàng (`INSERT INTO orders`).
-2. **Gom Nhóm Kết Nối Bằng PgBouncer (Connection Pooling):**
-   - Không cho phép hàng chục Pods kết nối trực tiếp vào PostgreSQL.
-   - Triển khai PgBouncer theo cơ chế **Transaction Pooling**: Hơn $10.000$ kết nối từ các client được ghép vào một nhóm nhỏ chỉ gồm $150 – 200$ kết nối thực tế tới PostgreSQL Server. Nhờ đó, Database CPU không bị lãng phí vào việc cấp phát bộ nhớ ngữ cảnh phiên (Process Context Switching).
+2. **Gom Nhóm Kết Nối Bằng HikariCP / ProxySQL (Connection Pooling):**
+   - Không cho phép hàng chục Pods kết nối trực tiếp vào MySQL 8.0.
+   - Triển khai HikariCP / ProxySQL theo cơ chế **Transaction Pooling**: Hơn $10.000$ kết nối từ các client được ghép vào một nhóm nhỏ chỉ gồm $150 – 200$ kết nối thực tế tới MySQL 8.0 Server. Nhờ đó, Database CPU không bị lãng phí vào việc cấp phát bộ nhớ ngữ cảnh phiên (Process Context Switching).
+

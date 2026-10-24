@@ -1,4 +1,4 @@
-# UC13 — Báo Cáo Doanh Thu & Vé Bán (Revenue & Ticket Sales Reports)
+﻿# UC13 — Báo Cáo Doanh Thu & Vé Bán (Revenue & Ticket Sales Reports)
 
 ## 1. Thông Tin Chung
 
@@ -159,3 +159,4 @@ Use case này mô tả nghiệp vụ trích xuất, tổng hợp và phân tích
 | **UC13.4** | Báo Cáo Đối Soát Cổng Thanh Toán (Reconciliation) | Admin | VNPay, MoMo API | Kiểm tra chênh lệch số dư ngân hàng |
 | **UC13.5** | Xuất Báo Cáo Ra Excel/CSV (Sync & Async Export) | Organizer, Admin | Message Queue, S3 Storage | Tải dữ liệu ngoại tuyến kế toán |
 | **UC13.6** | Cấu Hình Lịch Gửi Báo Cáo Định Kỳ Qua Email | Organizer, Admin | Notification Worker | Nhận báo cáo tự động mỗi 08:00 sáng |
+

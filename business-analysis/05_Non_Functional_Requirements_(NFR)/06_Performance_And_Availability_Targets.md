@@ -1,4 +1,4 @@
-# 06 — Mục Tiêu Hiệu Năng & Độ Sẵn Sàng (Performance & Availability Targets - SLA/SLO/SLI)
+﻿# 06 — Mục Tiêu Hiệu Năng & Độ Sẵn Sàng (Performance & Availability Targets - SLA/SLO/SLI)
 
 ## 1. Giới Thiệu & Khung Tiêu Chuẩn SLA, SLO, SLI
 
@@ -59,7 +59,7 @@ Ngân sách lỗi cho độ sẵn sàng $99.99\%$ trong 30 ngày là **$0.01\%$*
 | **Tầng Tiếp Nhận (API Gateway)** | $35.000\text{ QPS}$ | $45.000\text{ QPS}$ trong 5 phút | Không rơi rụng gói tin (Packet drop rate $= 0\%$) |
 | **Tầng Hàng Chờ Ảo (Redis Queue)** | $32.000\text{ QPS}$ | $40.000\text{ QPS}$ | CPU Redis không vượt quá $75\%$ |
 | **Tầng Giữ Ghế (Distributed Locking)** | $1.500\text{ TPS}$ | $3.500\text{ TPS}$ | Sai số giữ trùng ghế $= 0$ (Zero Double-Booking) |
-| **Tầng Giao Dịch Ghi (RDBMS Master)** | $150\text{ TPS}$ | $300\text{ TPS}$ | Thời gian giữ Connection PgBouncer $< 50\text{ ms}$ |
+| **Tầng Giao Dịch Ghi (RDBMS Master)** | $150\text{ TPS}$ | $300\text{ TPS}$ | Thời gian giữ Connection HikariCP / ProxySQL $< 50\text{ ms}$ |
 | **Tầng Soát Vé Tại Cổng (Check-In Staff)** | $20\text{ TPS}$ | $100\text{ TPS}$ | Phản hồi tại thiết bị cầm tay $\le 500\text{ ms}$ |
 | **Phân Phối Thông Báo (Kafka Dispatcher)** | $3.000\text{ msgs/s}$ | $8.000\text{ msgs/s}$ | Consumer Lag trở về 0 trong vòng 10 phút |
 
@@ -73,3 +73,4 @@ Ngân sách lỗi cho độ sẵn sàng $99.99\%$ trong 30 ngày là **$0.01\%$*
 | **SEV-2** | 🟠 Major Outage | Một cổng thanh toán bị lỗi (nhưng cổng khác vẫn hoạt động); Phòng chờ ảo bị chậm trễ $100\%$; Độ trễ API P99 vượt quá $2.0\text{ giây}$ | **$< 15\text{ phút}$** | **$< 2\text{ giờ}$** |
 | **SEV-3** | 🟡 Moderate Impact | Không gửi được thông báo Marketing; Tính năng bình luận/đánh giá bị lỗi; Báo cáo doanh thu cập nhật chậm hơn 15 phút | **$< 60\text{ phút}$** | **$< 8\text{ giờ}$** |
 | **SEV-4** | 🟢 Minor Issue | Lỗi hiển thị giao diện nhỏ trên phiên bản trình duyệt cũ; Lỗi chính tả trong email thông báo | **$< 4\text{ giờ}$** | Trong chu kỳ Sprint tiếp theo |
+

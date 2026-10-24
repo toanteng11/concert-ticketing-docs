@@ -1,4 +1,4 @@
-# 05 — Tối Ưu Hóa Cơ Sở Dữ Liệu & An Toàn Bảo Mật Hệ Thống (DB Optimization & Security)
+﻿# 05 — Tối Ưu Hóa Cơ Sở Dữ Liệu & An Toàn Bảo Mật Hệ Thống (DB Optimization & Security)
 
 ## 1. Giới Thiệu & Mục Tiêu
 
@@ -6,11 +6,11 @@ Một hệ thống bán vé concert quy mô lớn phải đáp ứng đồng th�
 1. **Tối ưu hóa hiệu năng cơ sở dữ liệu cực đại:** Đảm bảo thời gian phản hồi câu truy vấn $< 10\text{ ms}$ cho các bảng chứa hàng chục triệu bản ghi trong điều kiện tải ghi dồn dập.
 2. **An toàn bảo mật cấp độ doanh nghiệp (Enterprise Security):** Bảo vệ tuyệt đối thông tin thanh toán, chống tấn công đánh cắp vé, ngăn chặn tài khoản ảo (Bot Farming) và tuân thủ các tiêu chuẩn bảo mật dữ liệu.
 
-Tài liệu này đặc tả chi tiết kiến trúc tối ưu hóa cơ sở dữ liệu PostgreSQL và toàn bộ các lớp phòng thủ an ninh thông tin của hệ thống.
+Tài liệu này đặc tả chi tiết kiến trúc tối ưu hóa cơ sở dữ liệu MySQL 8.0 và toàn bộ các lớp phòng thủ an ninh thông tin của hệ thống.
 
 ---
 
-## 2. Chiến Lược Tối Ưu Hóa Cơ Sở Dữ Liệu (PostgreSQL Optimization)
+## 2. Chiến Lược Tối Ưu Hóa Cơ Sở Dữ Liệu (MySQL 8.0 Optimization)
 
 ### 1. Thiết Kế Chỉ Mục Thông Minh (Targeted & Partial Indexing)
 Tránh tạo chỉ mục tràn lan gây chậm thao tác ghi (`INSERT`/`UPDATE`), hệ thống tập trung vào các chỉ mục có tính chọn lọc cao:
@@ -49,10 +49,10 @@ ALTER TABLE seats SET (
 );
 ```
 
-### 4. Quản Lý Kết Nối Bằng PgBouncer (Transaction Pooling)
+### 4. Quản Lý Kết Nối Bằng HikariCP / ProxySQL (Transaction Pooling)
 - Thay vì cấp mỗi Microservice một kết nối riêng làm cạn kiệt RAM Database:
-- Triển khai cụm PgBouncer ở chế độ `pool_mode = transaction`.
-- Các kết nối client chỉ giữ kết nối vật lý tới PostgreSQL trong khoảng thời gian thực thi một giao dịch (`BEGIN` $\rightarrow$ `COMMIT`). Ngay sau khi hoàn tất, kết nối được thu hồi và gán cho request khác, cho phép $150$ kết nối vật lý phục vụ hơn $10.000$ client đồng thời.
+- Triển khai cụm HikariCP / ProxySQL ở chế độ `pool_mode = transaction`.
+- Các kết nối client chỉ giữ kết nối vật lý tới MySQL 8.0 trong khoảng thời gian thực thi một giao dịch (`BEGIN` $\rightarrow$ `COMMIT`). Ngay sau khi hoàn tất, kết nối được thu hồi và gán cho request khác, cho phép $150$ kết nối vật lý phục vụ hơn $10.000$ client đồng thời.
 
 ---
 
@@ -107,3 +107,4 @@ Hệ thống thiết lập 4 nhóm vai trò (Roles) với ranh giới quyền h�
   - Tự động chặn các mẫu tấn công đã biết trong danh mục OWASP Top 10.
   - Ngăn chặn các công cụ quét lỗ hổng tự động (Nmap, SQLmap, Nikto).
   - Áp dụng kiểm tra thử thách hình ảnh (Cloudflare Turnstile CAPTCHA) khi phát hiện hành vi truy cập bất thường giống bot trước khi cho phép vào phòng chờ.
+

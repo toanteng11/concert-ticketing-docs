@@ -1,4 +1,4 @@
-# 🎫 Bộ Tài Liệu Phân Tích Nghiệp Vụ Hệ Thống Bán Vé Ca Nhạc Trực Tuyến (Concert Ticketing Business Analysis Documentation)
+﻿# 🎫 Bộ Tài Liệu Phân Tích Nghiệp Vụ Hệ Thống Bán Vé Ca Nhạc Trực Tuyến (Concert Ticketing Business Analysis Documentation)
 
 > **Mục tiêu tối thượng:** Bộ tài liệu Phân tích Nghiệp vụ (Business Analysis - BA) này được xây dựng chuẩn hóa, toàn diện và chặt chẽ, đóng vai trò là **cơ sở dữ liệu đặc tả tiền đề** để các kỹ sư hệ thống, kiến trúc sư phần mềm (Solution Architects), lập trình viên và kiểm thử viên có thể đọc hiểu và trực tiếp vẽ các sơ đồ kỹ thuật:
 > - **Sơ đồ Tổng thể Kiến trúc (System Architecture Diagrams)**
@@ -81,7 +81,7 @@ business-analysis/
 │
 ├── 06_System_Design_And_Tools_(Architecture_And_Tools)/ # Thiết kế kiến trúc, ERD & API
 │   ├── 01_High_Level_Client_Server_And_API_Gateway_Architecture.md
-│   ├── 02_Microservices_Architecture_And_Design.md
+│   ├── 02_Modular Monolith_Architecture_And_Design.md
 │   ├── 03_ERD_And_Database_Schema_Design.md
 │   ├── 04_RESTful_API_And_Webhook_Design.md
 │   ├── 05_Technology_Stack_And_Development_Tools.md
@@ -125,7 +125,7 @@ Dành cho các thành viên đội ngũ thiết kế, đồ họa kỹ thuật v
 | **State Machine Diagrams (Astah)** | `SM01` đến `SM05` | 5 vòng đời: Concert, Ghế (Seat), Đơn hàng (Order), Vé (Ticket) và Thanh toán/Hoàn tiền. |
 | **Activity / Flowcharts (Astah)** | `BF01` đến `BF06` | Các bước phân nhánh điều kiện: Hàng chờ, Giữ ghế, Thanh toán, Hủy/hoàn tiền, Duyệt sự kiện, Quét QR. |
 | **Entity Relationship Diagram (Astah)** | `03_ERD_And_Database_Schema_Design.md` | 19 thực thể chuẩn MySQL 8.0, kiểu dữ liệu, khóa PK/FK, chỉ mục B-tree và ràng buộc toàn vẹn. |
-| **High-Level System Architecture (Astah)**| `01_High_Level_Architecture...` | 7 tầng kiến trúc: Client $\rightarrow$ CDN/WAF $\rightarrow$ Gateway $\rightarrow$ Microservices $\rightarrow$ Cache $\rightarrow$ Kafka $\rightarrow$ MySQL. |
+| **High-Level System Architecture (Astah)**| `01_High_Level_Architecture...` | 7 tầng kiến trúc: Client $\rightarrow$ CDN/WAF $\rightarrow$ Gateway $\rightarrow$ Modular Monolith $\rightarrow$ Cache $\rightarrow$ Kafka $\rightarrow$ MySQL. |
 | **UI/UX Wireframes & Prototypes (Figma)** | `UC04`, `UC05`, `UC06`, `UC07`, `UC14` | Giao diện phòng chờ ảo, sơ đồ ghế khán đài SVG trực quan, màn hình thanh toán, mã Dynamic QR. |
 
 ---
@@ -138,3 +138,5 @@ Dành cho các thành viên đội ngũ thiết kế, đồ họa kỹ thuật v
 - **Thời gian giữ ghế tạm thời:** Đúng $600\text{ giây}$ ($10\text{ phút}$)
 - **Tốc độ phản hồi quét vé tại cổng:** $\le 500\text{ ms}$
 - **Nguyên tắc cốt lõi:** **Tuyệt đối không bán trùng ghế (Zero Double-Booking)** & **Chống thanh toán trùng lặp (Idempotent Payment)**.
+
+

@@ -1,4 +1,4 @@
-# BF06 — Business Flow: Quét QR & Check-in Tại Cổng Sự Kiện (QR Scanning & Gate Check-in)
+﻿# BF06 — Business Flow: Quét QR & Check-in Tại Cổng Sự Kiện (QR Scanning & Gate Check-in)
 
 ## 1. Mục Đích
 
@@ -176,3 +176,4 @@ sequenceDiagram
 | QR giả mạo (chữ ký sai) | 🔴 Đỏ đậm: "VÉ GIẢ MẠO — CẢNH BÁO AN NINH" | Giữ người lại; Gọi an ninh ngay; Không tự xử lý | BR-TCK-002 |
 | Chưa đến giờ mở cửa | ⚠️ Xám: "CHƯA ĐẾN GIỜ MỞ CỬA — [HH:mm]" | Yêu cầu khách đợi | BR-TCK-007 |
 | Mất mạng tại cổng | ⚡ Offline Mode kích hoạt tự động | Tiếp tục soát vé; Đồng bộ sau | BR-TCK-005 |
+

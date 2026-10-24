@@ -1,15 +1,15 @@
-# 02 — Ước Tính Dung Lượng Lưu Trữ (Storage Capacity Estimation)
+﻿# 02 — Ước Tính Dung Lượng Lưu Trữ (Storage Capacity Estimation)
 
 ## 1. Giới Thiệu & Mục Tiêu Quy Hoạch
 
 Quy hoạch dung lượng lưu trữ (**Storage Capacity Planning**) là tiền đề cốt lõi để đảm bảo hệ thống vận hành ổn định trong thời gian dài (1 năm, 3 năm, 5 năm) mà không gặp sự cố cạn kiệt đĩa cứng (Disk Exhaustion) hoặc suy giảm hiệu năng do kích thước bảng cơ sở dữ liệu phình to.
 
 Tài liệu này lượng hóa chi tiết nhu cầu lưu trữ trên 5 tầng lưu trữ dữ liệu chuyên biệt:
-1. **Cơ sở dữ liệu Quan hệ (RDBMS - PostgreSQL):** Lưu trữ dữ liệu giao dịch cốt lõi (ACID-compliant).
+1. **Cơ sở dữ liệu Quan hệ (RDBMS - MySQL 8.0):** Lưu trữ dữ liệu giao dịch cốt lõi (ACID-compliant).
 2. **Bộ đệm In-Memory (Redis Cluster):** Lưu trữ phiên làm việc, hàng chờ ảo, khóa giữ ghế và bộ đếm rate limit.
-3. **Message Broker (Apache Kafka):** Lưu trữ hàng đợi sự kiện và nhật ký thông báo phân tán.
+3. **Message Broker (Spring @Async Events):** Lưu trữ hàng đợi sự kiện và nhật ký thông báo phân tán.
 4. **Kho Lưu Trữ Đối Tượng (Object Storage - AWS S3 / MinIO):** Lưu trữ hình ảnh vé, tài liệu pháp lý, hóa đơn PDF và file xuất báo cáo.
-5. **Hệ Thống Phân Tích & Nhật Ký (Log & Search - Elasticsearch / ClickHouse):** Lưu trữ Audit Log, Access Log và chỉ mục tìm kiếm.
+5. **Hệ Thống Phân Tích & Nhật Ký (Log & Search - Elasticsearch / MySQL Read Replica):** Lưu trữ Audit Log, Access Log và chỉ mục tìm kiếm.
 
 ---
 
@@ -26,7 +26,7 @@ Tài liệu này lượng hóa chi tiết nhu cầu lưu trữ trên 5 tầng l�
 
 ---
 
-## 3. Ước Tính Kích Thước Bảng Cơ Sở Dữ Liệu Quan Hệ (PostgreSQL Schema Sizing)
+## 3. Ước Tính Kích Thước Bảng Cơ Sở Dữ Liệu Quan Hệ (MySQL 8.0 Schema Sizing)
 
 Hệ thống sử dụng hệ số mở rộng **Hệ số Dự phòng & Chỉ mục (Index & Overhead Factor) = 1.6** (nghĩa là kích thước chỉ mục B-tree, foreign key và khoảng trống khối dữ liệu chiếm thêm $60\%$ so với dung lượng dữ liệu thô).
 
@@ -46,8 +46,8 @@ Hệ thống sử dụng hệ số mở rộng **Hệ số Dự phòng & Chỉ m
 
 > **Nhận xét kiến trúc:**  
 > Kích thước RDBMS cốt lõi (bỏ qua Audit Log) sau 5 năm hoạt động chỉ vào khoảng $\approx 63\text{ GB}$. Kể cả khi cộng toàn bộ Audit Log, dung lượng cũng chưa vượt quá $200\text{ GB}$.  
-> $\rightarrow$ Cơ sở dữ liệu PostgreSQL hoàn toàn có thể lưu trữ trên một cụm Database Server tiêu chuẩn (Primary - Standby Replica) với ổ đĩa NVMe SSD 500 GB – 1 TB mà **chưa bắt buộc phải Sharding** trong 3–5 năm đầu.  
-> Tuy nhiên, với bảng `audit_logs` và `checkin_logs`, áp dụng chiến lược **PostgreSQL Table Partitioning** theo tháng (`PARTITION BY RANGE (created_at)`) để tối ưu tốc độ truy vấn và dễ dàng dọn dẹp dữ liệu cũ (Data Archival).
+> $\rightarrow$ Cơ sở dữ liệu MySQL 8.0 hoàn toàn có thể lưu trữ trên một cụm Database Server tiêu chuẩn (Primary - Standby Replica) với ổ đĩa NVMe SSD 500 GB – 1 TB mà **chưa bắt buộc phải Sharding** trong 3–5 năm đầu.  
+> Tuy nhiên, với bảng `audit_logs` và `checkin_logs`, áp dụng chiến lược **MySQL 8.0 Table Partitioning** theo tháng (`PARTITION BY RANGE (created_at)`) để tối ưu tốc độ truy vấn và dễ dàng dọn dẹp dữ liệu cũ (Data Archival).
 
 ---
 
@@ -73,18 +73,18 @@ Redis được dùng để lưu trữ dữ liệu nóng có độ trễ cực th
 
 ---
 
-## 5. Ước Tính Message Broker & Event Streaming (Apache Kafka)
+## 5. Ước Tính Message Broker & Event Streaming (Spring @Async Events)
 
-Kafka chịu trách nhiệm lưu trữ các luồng sự kiện phân tán: `concert.events`, `seat.held`, `order.created`, `payment.success`, `notification.dispatch`.
+spring-async chịu trách nhiệm lưu trữ các luồng sự kiện phân tán: `concert.events`, `seat.held`, `order.created`, `payment.success`, `notification.dispatch`.
 
 | Tham số định lượng | Giá trị tính toán | Giải thích |
 |---|---|---|
 | **Kích thước trung bình 1 Event message** | $1\text{ KB}$ ($1.024\text{ bytes}$) | Chuỗi JSON chứa metadata sự kiện và payload |
 | **Số sự kiện phát sinh trong 1 giờ mở bán cao điểm** | $1.500.000$ messages | Xếp hàng, chọn ghế, giữ ghế, gia hạn, trả ghế, tạo đơn, thanh toán |
 | **Dung lượng phát sinh giờ cao điểm** | $1.500.000 \times 1\text{ KB} \approx \mathbf{1.5\text{ GB}}$ | Dữ liệu thô |
-| **Hệ số sao lưu phân tán (Replication Factor = 3)** | $1.5\text{ GB} \times 3 = \mathbf{4.5\text{ GB}}$ | 3 bản sao lưu trữ trên 3 Kafka Broker khác nhau |
+| **Hệ số sao lưu phân tán (Replication Factor = 3)** | $1.5\text{ GB} \times 3 = \mathbf{4.5\text{ GB}}$ | 3 bản sao lưu trữ trên 3 spring-async Broker khác nhau |
 | **Thời gian lưu vết tin nhắn (Retention Period)** | 7 ngày ($168\text{ giờ}$) | Đủ thời gian replay sự kiện khi có sự cố xử lý |
-| **Tổng dung lượng đĩa cứng Kafka yêu cầu (Năm 1)** | Khoảng **50 GB – 100 GB** đĩa SSD trên mỗi Broker | Hoàn toàn đáp ứng dư dả cho toàn bộ các đợt mở bán trong tuần |
+| **Tổng dung lượng đĩa cứng spring-async yêu cầu (Năm 1)** | Khoảng **50 GB – 100 GB** đĩa SSD trên mỗi Broker | Hoàn toàn đáp ứng dư dả cho toàn bộ các đợt mở bán trong tuần |
 
 ---
 
@@ -123,6 +123,7 @@ Nhằm tối ưu hóa chi phí vận hành hạ tầng đám mây:
 
 | Loại dữ liệu | Phương thức sao lưu | Tần suất thực hiện | Thời gian lưu giữ bản sao | Điểm phục hồi mục tiêu (RPO) | Thời gian phục hồi mục tiêu (RTO) |
 |---|---|---|---|---|---|
-| **Cơ sở dữ liệu PostgreSQL** | Full Snapshot + WAL Archiving (Continuous Archiving) | Full: 1 lần/ngày lúc 01:00 AM; WAL: Mỗi 5 phút | 30 ngày gần nhất | **$\le 5$ phút** | **$\le 30$ phút** |
+| **Cơ sở dữ liệu MySQL 8.0** | Full Snapshot + WAL Archiving (Continuous Archiving) | Full: 1 lần/ngày lúc 01:00 AM; WAL: Mỗi 5 phút | 30 ngày gần nhất | **$\le 5$ phút** | **$\le 30$ phút** |
 | **Dữ liệu Redis Cache** | RDB Snapshot + AOF (Everysec) | RDB: Mỗi 6 giờ; AOF: Mỗi giây | 7 ngày | **$\le 1$ giây** | **$\le 5$ phút** |
 | **Object Storage (S3)** | S3 Cross-Region Replication (CRR) | Đồng bộ liên tục thời gian thực | 3 năm | **$\approx 0$ giây** | **$\le 15$ phút** |
+

@@ -1,4 +1,4 @@
-# BF05 — Business Flow: Phê Duyệt & Hủy Concert (Concert Approval & Cancellation Flow)
+﻿# BF05 — Business Flow: Phê Duyệt & Hủy Concert (Concert Approval & Cancellation Flow)
 
 ## 1. Mục Đích
 
@@ -168,3 +168,4 @@ flowchart TD
     G -->|Xác nhận| H["Lưu sơ đồ ghế\n(Không được sửa sau khi concert ON_SALE)\n(BR-CON-002)"]
     H --> I["Sơ đồ ghế đã khóa (frozen)\nSẵn sàng gửi phê duyệt"]
 ```
+

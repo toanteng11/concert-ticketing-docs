@@ -1,4 +1,4 @@
-# UC09 — Hủy Đơn Hàng & Yêu Cầu Hoàn Tiền (Order Cancellation & Refund Request)
+﻿# UC09 — Hủy Đơn Hàng & Yêu Cầu Hoàn Tiền (Order Cancellation & Refund Request)
 
 ## 1. Thông Tin Chung
 
@@ -132,3 +132,4 @@ Use case này mô tả hai kịch bản hủy đơn hàng: (1) hủy đơn đang
 | UC09.3 — Gửi lệnh hoàn tiền tới cổng | System | VNPay / MoMo API | Async; có retry |
 | UC09.4 — Nhận xác nhận hoàn tiền (IPN) | System | VNPay / MoMo | Cập nhật order → REFUNDED |
 | UC09.5 — Thông báo kết quả hoàn tiền | System | Email, Push Service | Gửi mã giao dịch hoàn |
+

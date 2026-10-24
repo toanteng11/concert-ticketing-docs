@@ -1,11 +1,11 @@
-# 06 — Ma Trận Truy Vết Yêu Cầu (Requirements Traceability Matrix - RTM)
+﻿# 06 — Ma Trận Truy Vết Yêu Cầu (Requirements Traceability Matrix - RTM)
 
 ## 1. Giới Thiệu & Mục Đích
 
 Ma Trận Truy Vết Yêu Cầu (**Requirements Traceability Matrix — RTM**) là công cụ trung tâm liên kết chặt chẽ giữa **Quy tắc Nghiệp vụ (Business Rules - BR)**, **Yêu Cầu Chức Năng (Use Cases & User Stories)**, **Thực thể Dữ liệu (Database Entities)** và **Kịch bản Kiểm thử Nghiệm thu (Test Scenarios / Acceptance Criteria)**.
 
 Tài liệu này được xây dựng nhằm phục vụ:
-1. **System Architect & Designer:** Nắm bắt toàn bộ luồng dữ liệu, các bảng bị ảnh hưởng và biên giới dịch vụ khi vẽ Kiến trúc Microservices và ERD.
+1. **System Architect & Designer:** Nắm bắt toàn bộ luồng dữ liệu, các bảng bị ảnh hưởng và biên giới dịch vụ khi vẽ Kiến trúc Modular Monolith và ERD.
 2. **Software Engineers:** Đối chiếu yêu cầu nghiệp vụ và các ràng buộc khi cài đặt logic API và trạng thái hệ thống.
 3. **QA / Tester:** Thiết kế đầy đủ bộ Test Case bao phủ 100% các điều kiện biên, luồng ngoại lệ và quy tắc kinh doanh.
 4. **Project Manager / Product Owner:** Kiểm soát phạm vi dự án, đảm bảo không có yêu cầu nào bị bỏ sót (Zero Requirement Gap).
@@ -57,16 +57,16 @@ Bảng phân bổ này giúp các kỹ sư kiến trúc phần mềm phân đị
 
 | Tên Microservice | Use Cases Phụ Trách | Trách Nhiệm Chính | Cơ Sở Dữ Liệu Sở Hữu |
 |---|---|---|---|
-| **Auth & Account Service** | UC01, UC02, UC03 | Đăng ký, đăng nhập, JWT/OAuth2, phân quyền RBAC, hồ sơ người dùng | PostgreSQL (`users`, `user_credentials`, `user_sessions`) |
-| **Concert & Catalog Service** | UC04, UC11, UC12 | Danh mục concert, nghệ sĩ, sơ đồ khán đài (zones, seats), duyệt sự kiện | PostgreSQL (`concerts`, `ticket_zones`, `venues`, `artists`) + Elasticsearch |
+| **Auth & Account Service** | UC01, UC02, UC03 | Đăng ký, đăng nhập, JWT/OAuth2, phân quyền RBAC, hồ sơ người dùng | MySQL 8.0 (`users`, `user_credentials`, `user_sessions`) |
+| **Concert & Catalog Service** | UC04, UC11, UC12 | Danh mục concert, nghệ sĩ, sơ đồ khán đài (zones, seats), duyệt sự kiện | MySQL 8.0 (`concerts`, `ticket_zones`, `venues`, `artists`) + Elasticsearch |
 | **Waiting Room & Queue Service** | UC04, UC05 | Quản lý hàng chờ ảo, xếp hàng ngẫu nhiên, điều tiết lưu lượng truy cập | Redis Cluster (Sorted Sets, Virtual Queue Tokens) |
-| **Booking & Reservation Service** | UC05, UC06 | Xem sơ đồ ghế real-time, khóa giữ ghế phân tán (Distributed Lock), timeout 10 phút | Redis (Seat Hold Locks) + PostgreSQL (`seat_holds`, `seats`) |
-| **Order & Checkout Service** | UC07, UC08, UC09 | Quản lý vòng đời đơn hàng, áp dụng voucher, tính toán hóa đơn | PostgreSQL (`orders`, `order_items`, `vouchers`) |
-| **Payment & Settlement Service** | UC07, UC09, UC13 | Tích hợp cổng VNPay/MoMo, xử lý webhook, hoàn tiền, đối soát tài chính | PostgreSQL (`payment_transactions`, `refunds`, `settlements`) |
-| **Ticket & Check-In Service** | UC08, UC14 | Phát hành mã Dynamic QR vé điện tử, giải mã xác thực vào cổng tốc độ cao | Redis + PostgreSQL (`tickets`, `checkin_logs`) + Offline SQLite |
-| **Review & Social Service** | UC10 | Đánh giá, xếp hạng sao, bình luận của khán giả thực tế (Verified Attendees) | PostgreSQL (`reviews`, `review_reports`) |
-| **Notification Engine** | UC15 | Định tuyến thông báo đa kênh (Email, Push, SMS, In-App), chống spam | PostgreSQL (`notification_logs`, `templates`) + Apache Kafka |
-| **Analytics & Reporting Service** | UC13 | Tổng hợp số liệu bán vé, doanh thu, tỷ lệ lấp đầy ghế theo thời gian thực | ClickHouse / PostgreSQL Read Replica |
+| **Booking & Reservation Service** | UC05, UC06 | Xem sơ đồ ghế real-time, khóa giữ ghế phân tán (Distributed Lock), timeout 10 phút | Redis (Seat Hold Locks) + MySQL 8.0 (`seat_holds`, `seats`) |
+| **Order & Checkout Service** | UC07, UC08, UC09 | Quản lý vòng đời đơn hàng, áp dụng voucher, tính toán hóa đơn | MySQL 8.0 (`orders`, `order_items`, `vouchers`) |
+| **Payment & Settlement Service** | UC07, UC09, UC13 | Tích hợp cổng VNPay/MoMo, xử lý webhook, hoàn tiền, đối soát tài chính | MySQL 8.0 (`payment_transactions`, `refunds`, `settlements`) |
+| **Ticket & Check-In Service** | UC08, UC14 | Phát hành mã Dynamic QR vé điện tử, giải mã xác thực vào cổng tốc độ cao | Redis + MySQL 8.0 (`tickets`, `checkin_logs`) + Offline SQLite |
+| **Review & Social Service** | UC10 | Đánh giá, xếp hạng sao, bình luận của khán giả thực tế (Verified Attendees) | MySQL 8.0 (`reviews`, `review_reports`) |
+| **Notification Engine** | UC15 | Định tuyến thông báo đa kênh (Email, Push, SMS, In-App), chống spam | MySQL 8.0 (`notification_logs`, `templates`) + Spring @Async Events |
+| **Analytics & Reporting Service** | UC13 | Tổng hợp số liệu bán vé, doanh thu, tỷ lệ lấp đầy ghế theo thời gian thực | MySQL Read Replica / MySQL 8.0 Read Replica |
 
 ---
 
@@ -79,3 +79,4 @@ Bảng phân bổ này giúp các kỹ sư kiến trúc phần mềm phân đị
 | **Hiệu năng & Tải cao** | UC04, UC05, UC06, UC14, UC15 | 100.000 người dùng đồng thời trong phòng chờ; Thời gian phản hồi quét vé tại cổng $\le 500\text{ms}$; Bắn 50.000 push notification trong 10 giây | Load Test (k6 / JMeter), Distributed Benchmarking |
 | **Tích hợp Bên Thứ Ba** | UC07, UC09, UC15 | Ngắt kết nối mạng giữa chừng khi VNPay đang xử lý; MoMo trả về lỗi timeout; SMS Gateway từ chối số điện thoại | Mocking, Stubbing, Network Delay Simulation |
 | **Toàn vẹn Nghiệp vụ Tài chính** | UC07, UC09, UC12, UC13 | Tiền hoàn trả tính toán đúng tỷ lệ theo ngày; Doanh thu đối soát không lệch 1 đồng; Không thanh toán thừa cho Organizer | Financial Audit Test, Database ACID Validation |
+

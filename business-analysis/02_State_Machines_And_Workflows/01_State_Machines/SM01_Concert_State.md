@@ -1,4 +1,4 @@
-# SM01 — State Machine: Concert (Trạng Thái Sự Kiện Concert)
+﻿# SM01 — State Machine: Concert (Trạng Thái Sự Kiện Concert)
 
 ## 1. Mục Đích
 
@@ -116,3 +116,4 @@ Khi concert chuyển sang `CANCELLED`, hệ thống **tự động** kích hoạ
 | **INV-CON-03** | Không thể chuyển từ `COMPLETED` hoặc `CANCELLED` quay ngược lại bất kỳ trạng thái nào. |
 | **INV-CON-04** | Chỉ concert ở trạng thái `ON_SALE` mới cho phép thao tác khóa ghế (HOLD) và tạo đơn hàng. |
 | **INV-CON-05** | Thông tin trọng yếu (sơ đồ ghế, giá, địa điểm, giờ biểu diễn) bị đóng băng (Immutable) kể từ khi chuyển sang `ON_SALE`. |
+

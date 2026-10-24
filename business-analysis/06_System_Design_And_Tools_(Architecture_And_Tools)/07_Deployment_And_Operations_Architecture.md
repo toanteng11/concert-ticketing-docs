@@ -1,90 +1,207 @@
-# 07 — Kiến Trúc Triển Khai & Vận Hành Hệ Thống (Deployment & Operations Architecture)
+﻿# 07 — Kiến Trúc Triển Khai & Vận Hành Hệ Thống (Deployment & Operations Architecture)
 
 ## 1. Giới Thiệu & Triết Lý Vận Hành
 
-Tài liệu này đặc tả toàn bộ kiến trúc hạ tầng mạng, cấu trúc cụm máy chủ điều phối (**Kubernetes Cluster Topology**), quy trình phát hành phần mềm liên tục (**CI/CD & GitOps**) và quy trình chuẩn bị vận hành trước giờ mở bán vé sự kiện (**Flash-Sale Operational Runbook**).
+Tài liệu này đặc tả toàn bộ kiến trúc hạ tầng mạng, cấu trúc cụm máy chủ, quy trình phát hành phần mềm liên tục (**CI/CD**) và quy trình chuẩn bị vận hành trước giờ mở bán vé sự kiện (**Flash-Sale Operational Runbook**).
+
+> **Ghi chú triển khai:** Nhờ chuyển sang kiến trúc **Modular Monolith**, cấu trúc triển khai đã được đơn giản hóa tối đa: từ 10+ Docker images (Microservices) xuống còn **3 services trong Docker Compose** (app + Redis + MySQL), giúp nhóm phát triển có thể chạy toàn bộ hệ thống trên laptop trong 30 giây.
 
 Mục tiêu vận hành:
-1. **Cô Lập Mạng Tuyệt Đối (Network Isolation & Zero Trust):** Các thành phần cơ sở dữ liệu và lưu trữ không có IP công khai, hoàn toàn được bảo vệ bên trong các phân vùng mạng riêng (Private/Isolated Subnets).
-2. **Triển Khai Bất Biến (Immutable Infrastructure & GitOps):** Toàn bộ trạng thái hạ tầng và cấu hình ứng dụng được phiên bản hóa trong kho Git (ArgoCD), không cấu hình thủ công trên máy chủ sản xuất.
-3. **Phát Hành Không Gián Đoạn (Zero-Downtime Deployment):** Nâng cấp phiên bản phần mềm trong khi hệ thống đang phục vụ khách hàng mà không làm rớt kết nối hoặc gây lỗi giao dịch.
+1. **Triển Khai Đơn Giản (Simple & Reproducible Deployment):** Toàn bộ stack triển khai được định nghĩa trong `docker-compose.yml` và `Dockerfile`, phiên bản hóa trong GitHub.
+2. **Triển Khai Không Gián Đoạn (Zero-Downtime Deployment):** Nâng cấp phiên bản phần mềm mà không làm rớt kết nối hoặc gây lỗi giao dịch, thực hiện qua Rolling Update.
+3. **Môi Trường Nhất Quán (Environment Parity):** Dev, Staging và Production dùng cùng Docker image, chỉ khác nhau ở file `.env` cấu hình.
 
 ---
 
-## 2. Cấu Trúc Mạng & Phân Vùng Mạng Ảo (VPC & Subnet Topology)
+## 2. Cấu Trúc Docker Compose (Development & Staging)
 
-Hệ thống được triển khai bên trong một Đám mây Riêng Ảo (**Virtual Private Cloud - VPC**) trải dài trên **3 Vùng Khả Dụng (Availability Zones - AZ1, AZ2, AZ3)**:
+Môi trường phát triển và staging được cấu hình bằng Docker Compose với 3 services chính:
 
-| Phân vùng mạng (Subnet Tier) | Dải địa chỉ IP (CIDR) | Khả năng truy cập Internet | Các thành phần triển khai bên trong | Cơ chế bảo vệ |
+```yaml
+# docker-compose.yml
+version: '3.8'
+services:
+
+  app:
+    image: ticketplatform/app:${APP_VERSION}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=dev
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_NAME=ticketdb
+      - DB_USERNAME=${DB_USERNAME}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ticketing-network
+
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: ticketdb
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_USER: ${DB_USERNAME}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      retries: 5
+    networks:
+      - ticketing-network
+
+  redis:
+    image: redis:7.2-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+    networks:
+      - ticketing-network
+
+volumes:
+  mysql-data:
+  redis-data:
+
+networks:
+  ticketing-network:
+    driver: bridge
+```
+
+---
+
+## 3. Dockerfile Cho Ứng Dụng Spring Boot
+
+```dockerfile
+# Dockerfile — Multi-stage build
+FROM eclipse-temurin:21-jdk-alpine AS builder
+WORKDIR /app
+COPY pom.xml .
+COPY src ./src
+RUN ./mvnw package -DskipTests
+
+FROM eclipse-temurin:21-jre-alpine AS runtime
+WORKDIR /app
+COPY --from=builder /app/target/ticket-platform-*.jar app.jar
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", \
+  "-XX:+UseG1GC", \
+  "-Xms512m", "-Xmx2g", \
+  "-Dspring.profiles.active=${SPRING_PROFILES_ACTIVE}", \
+  "app.jar"]
+```
+
+---
+
+## 4. Cấu Trúc Mạng & Phân Vùng (VPC & Subnet Topology — Production)
+
+Môi trường Production được triển khai trên Cloud (AWS / GCP) với phân vùng mạng bảo mật:
+
+| Phân vùng mạng | Dải IP (CIDR) | Truy cập Internet | Thành phần triển khai | Bảo vệ |
 |---|---|---|---|---|
-| **1. Public Subnets** (Mạng Công Khai) | `10.0.1.0/24`, `10.0.2.0/24`, `10.0.3.0/24` | Trực tiếp qua Internet Gateway (IGW) | AWS Application Load Balancer (ALB), NAT Gateways | Chỉ mở cổng TCP 443 (HTTPS) và 80 (HTTP redirect); Chặn toàn bộ cổng quản trị |
-| **2. Private Application Subnets** (Mạng Ứng Dụng) | `10.0.10.0/22`, `10.0.14.0/22`, `10.0.18.0/22` | Chiều ra (Outbound only) qua NAT Gateway | Cụm máy chủ Kubernetes EKS Worker Nodes, Kong Gateway, 10 Microservices | Không có IP công khai; Giao tiếp nội bộ qua mạng VPC ảo |
-| **3. Isolated Database Subnets** (Mạng Dữ Liệu Cô Lập) | `10.0.30.0/24`, `10.0.31.0/24`, `10.0.32.0/24` | **HOÀN TOÀN KHÔNG** (No Internet) | PostgreSQL Primary & Replicas, Redis Cluster, Kafka Brokers | Cách ly tuyệt đối; Chỉ chấp nhận kết nối từ dải IP của Application Subnet qua Security Groups |
+| **Public Subnets** | `10.0.1.0/24–3.0/24` | Trực tiếp qua IGW | Application Load Balancer (ALB), NAT Gateways | Chỉ mở TCP 443 & 80 |
+| **Private App Subnets** | `10.0.10.0/22–18.0/22` | Outbound qua NAT | **Spring Boot App Pods** (EKS / Docker Swarm), Kong Gateway | Không có IP công khai |
+| **Isolated DB Subnets** | `10.0.30.0/24–32.0/24` | **KHÔNG** | MySQL Primary & Replicas, Redis Cluster | Chỉ chấp nhận kết nối từ App Subnet |
 
 ---
 
-## 3. Kiến Trúc Cụm Kubernetes (EKS Cluster Architecture)
+## 5. Quy Trình CI/CD (GitHub Actions)
 
-Cụm Kubernetes được quản lý bởi dịch vụ **AWS EKS** (hoặc Google GKE) với các nhóm máy chủ (Node Groups) phân theo chức năng:
-
-### 1. Phân Bổ Nhóm Node Máy Chủ (Worker Node Groups)
-- **Nhóm 1: Core Compute Node Group (General Purpose):**
-  - Cấu hình: Thể hiện máy ảo `c6g.2xlarge` (8 vCPU, 16 GB RAM, chip ARM Graviton3).
-  - Chạy các dịch vụ: API Gateway, Auth, Catalog, Booking, Order, Payment.
-  - Chính sách co giãn: Tối thiểu 6 nodes, tối đa 24 nodes trong giờ mở bán cao điểm.
-- **Nhóm 2: Memory-Optimized Node Group:**
-  - Cấu hình: Thể hiện máy ảo `r6g.xlarge` (4 vCPU, 32 GB RAM).
-  - Dành riêng cho các ứng dụng đệm và xếp hàng đòi hỏi băng thông RAM cực lớn.
-- **Nhóm 3: Spot Instance Node Group (Tiết kiệm chi phí):**
-  - Cấu hình: Máy ảo dạng Spot tiết kiệm $70\%$ chi phí.
-  - Chạy các tác vụ xử lý nền không nhạy cảm với việc bị tắt đột ngột: Notification Worker, Async Excel Export Worker, ClickHouse Data Sync.
-
-### 2. Phân Chia Không Gian Tên (Kubernetes Namespaces)
-- `ingress-system`: Chứa Kong Gateway Ingress Controller và Cert-Manager.
-- `ticketing-prod`: Toàn bộ 10 Microservices môi trường Production.
-- `ticketing-staging`: Môi trường kiểm thử nghiệm thu (Pre-prod).
-- `monitoring`: Prometheus, Grafana, Jaeger, FluentBit.
-- `kafka`: Cụm Apache Kafka Strimzi Operator.
-
----
-
-## 4. Quy Trình Tích Hợp & Triển Khai Tự Động (CI/CD Pipeline with GitOps)
-
-Toàn bộ chu trình từ lúc lập trình viên commit mã nguồn đến khi chạy trên môi trường thực tế tuân thủ quy trình 6 bước tự động hóa $100\%$:
+Toàn bộ chu trình từ khi developer commit đến khi chạy trên Production:
 
 ```
-[Developer Git Commit]
-       ↓ (1. Kích hoạt GitHub Actions)
-[Linting, Compile & Unit Tests (Coverage >= 80%)]
-       ↓ (2. Kiểm tra chất lượng & An ninh)
-[SonarQube Quality Gate & Trivy Container Scan]
-       ↓ (3. Đóng gói & Phát hành)
-[Build Multi-stage Docker Image → Đẩy vào AWS ECR]
-       ↓ (4. Cập nhật Manifest GitOps)
-[Tự động tạo PR cập nhật Image Tag trong repo K8s-Configs]
-       ↓ (5. Điều phối GitOps)
-[ArgoCD phát hiện commit mới → Đồng bộ vào Cụm EKS]
-       ↓ (6. Chiến lược phát hành an toàn)
-[Canary Deployment: 5% → 25% → 100% sau 10 phút kiểm tra lỗi]
+[Developer: git push → GitHub]
+        ↓ (Kích hoạt GitHub Actions)
+[1. Compile & Unit Tests (Maven / JUnit 5)]
+   → Coverage >= 80% (JaCoCo)
+        ↓
+[2. Code Quality & Security Scan]
+   → SonarQube Quality Gate
+   → Trivy Container Vulnerability Scan
+        ↓
+[3. Build Docker Image]
+   → docker build (multi-stage)
+   → docker push → Docker Hub / AWS ECR
+        ↓
+[4. Deploy to Staging]
+   → docker-compose up -d (staging env)
+   → Run Integration Tests (Postman / RestAssured)
+        ↓
+[5. Manual Approval Gate]
+   → Tech Lead review trước khi deploy Production
+        ↓
+[6. Deploy to Production]
+   → Rolling Update (zero-downtime):
+     Khởi động instance mới → Health check pass
+     → Chuyển traffic → Tắt instance cũ
 ```
 
-### Chiến Lược Phát Hành Hoàng Yến (Canary Deployment Strategy)
-Đối với các dịch vụ lõi nhạy cảm như `Booking Service` và `Payment Service`:
-- Phiên bản mới (Canary Pods) được triển khai song song và chỉ tiếp nhận **$5\%$** lưu lượng truy cập thực tế.
-- Hệ thống Prometheus tự động giám sát tỷ lệ lỗi (Error Rate) và độ trễ P99 của phiên bản mới trong vòng **10 phút**.
-- Nếu tỷ lệ lỗi tăng quá $0.1\%$ hoặc độ trễ tăng quá $20\%$: ArgoCD kích hoạt cơ chế **Tự Động Quay Đầu (Automated Rollback)** về phiên bản cũ ngay lập tức mà không cần can thiệp thủ công.
-- Nếu các chỉ số ổn định: Lưu lượng được tăng dần lên $25\% \rightarrow 50\% \rightarrow 100\%$.
+### Chiến Lược Rolling Update (Zero-Downtime)
+
+Khi deploy phiên bản mới cho ứng dụng Monolith trong Kubernetes hoặc Docker Swarm:
+- Khởi động Pod/Container mới với image version mới.
+- Health check endpoint `/actuator/health` phải trả về `200 OK` trước khi nhận traffic.
+- Load Balancer chuyển traffic sang instance mới từ từ.
+- Tắt instance cũ sau khi tất cả request đang xử lý hoàn tất (Graceful Shutdown).
 
 ---
 
-## 5. Quy Trình Vận Hành Trước Giờ Mở Bán Sự Kiện Lớn (Mega Flash-Sale Runbook)
+## 6. Cấu Hình Môi Trường (Environment Variables)
 
-Đây là quy trình bắt buộc phải thực thi trước mỗi sự kiện bán vé quy mô trên $10.000$ chỗ ngồi:
+| Biến môi trường | Mô tả | Ví dụ |
+|---|---|---|
+| `SPRING_PROFILES_ACTIVE` | Profile Spring Boot | `prod`, `staging`, `dev` |
+| `DB_HOST` | MySQL host | `mysql-primary.internal` |
+| `DB_PORT` | MySQL port | `3306` |
+| `DB_NAME` | Tên database | `ticketdb` |
+| `DB_USERNAME` | MySQL user | `appuser` |
+| `DB_PASSWORD` | MySQL password | *(secret)* |
+| `REDIS_HOST` | Redis host | `redis-cluster.internal` |
+| `REDIS_PASSWORD` | Redis auth | *(secret)* |
+| `JWT_SECRET_KEY` | JWT RS256 private key path | `/secrets/jwt-private.pem` |
+| `VNPAY_TMN_CODE` | VNPay terminal code | *(secret)* |
+| `VNPAY_HASH_SECRET` | VNPay hash secret | *(secret)* |
+| `MAIL_HOST` | SMTP server | `smtp.sendgrid.net` |
+| `MAIL_USERNAME` | SMTP user | *(secret)* |
+| `MAIL_PASSWORD` | SMTP password | *(secret)* |
 
-| Mốc thời gian | Đội ngũ phụ trách | Hành động vận hành bắt buộc | Mục tiêu kiểm soát |
+---
+
+## 7. Quy Trình Vận Hành Trước Giờ Mở Bán Sự Kiện Lớn (Flash-Sale Runbook)
+
+Quy trình bắt buộc thực thi trước mỗi sự kiện bán vé quy mô trên 10.000 chỗ ngồi:
+
+| Mốc thời gian | Đội ngũ phụ trách | Hành động vận hành bắt buộc | Mục tiêu |
 |---|---|---|---|
-| **$T - 2$ Giờ** | Lead SRE & DevOps | 1. Kiểm tra tình trạng sức khỏe tổng thể các cụm máy chủ (Node Health Checks)<br>2. Xác minh dung lượng trống ổ cứng SSD PostgreSQL và Kafka còn $> 40\%$<br>3. Kiểm tra hạn mức kết nối cổng thanh toán VNPay và MoMo | Đảm bảo hạ tầng sạch và không có sự cố tiềm ẩn |
-| **$T - 60$ Phút**| SRE & Lead Backend | 1. Đóng băng toàn bộ hoạt động deploy mã nguồn mới (Feature Freeze)<br>2. Kích hoạt chế độ Warm-Up: Nâng số lượng Pods lên quy mô tối đa ($84\text{ pods}$)<br>3. Pre-load sơ đồ ghế và cấu hình concert vào Redis Cluster | Tránh hiện tượng trễ khởi động container khi người dùng ùa vào |
-| **$T - 15$ Phút**| Hệ thống tự động | 1. Kích hoạt **Phòng Chờ Ảo (Holding Room)**<br>2. Chuyển hướng toàn bộ người truy cập mới vào phòng chờ gom lưu lượng<br>3. Bật chế độ ghi log tối giản (Minimal Logging) để tiết kiệm I/O | Hấp thụ cú sốc lưu lượng ban đầu |
-| **$T$ (Giờ G)** | Hệ thống tự động | 1. Chạy thuật toán xáo trộn ngẫu nhiên phân tán số thứ tự hàng chờ<br>2. Mở van xả điều tiết $5.000\text{ CCU}$ vào khu vực chọn ghế<br>3. Đội ngũ kỹ thuật túc trực màn hình Dashboard giám sát P99 Latency và Error Rate | Vận hành bán vé chính thức |
-| **$T + 30$ Phút**| Product Owner & SRE | 1. Vé đã bán hết hoặc lưu lượng hạ nhiệt: Đóng phòng chờ ảo<br>2. Hạ số lượng Pods về mức bình thường (Scale-Down Cooldown)<br>3. Tiến hành đối soát nhanh số vé đã bán và số tiền ghi nhận trong tài khoản Escrow | Hoàn tất đợt mở bán thành công |
+| **T - 2 Giờ** | Lead Backend & DevOps | 1. Kiểm tra sức khỏe tổng thể app, MySQL, Redis<br>2. Xác minh dung lượng trống MySQL > 40%<br>3. Kiểm tra hạn mức kết nối cổng VNPay/MoMo | Đảm bảo hạ tầng sạch |
+| **T - 60 Phút** | Lead Backend | 1. **Feature Freeze** — đóng băng deploy mã mới<br>2. Scale-out: Tăng số lượng app instances lên tối đa<br>3. Pre-load concert & seat map vào Redis Cache | Tránh cold-start khi người dùng ùa vào |
+| **T - 15 Phút** | Hệ thống tự động | 1. Kích hoạt Phòng Chờ Ảo (Waiting Room)<br>2. Chuyển hướng traffic vào queue endpoint<br>3. Bật chế độ ghi log tối giản (Minimal Logging) | Hấp thụ cú sốc lưu lượng ban đầu |
+| **T (Giờ G)** | Hệ thống tự động | 1. Thuật toán xáo trộn số thứ tự hàng chờ<br>2. Mở van xả 5.000 CCU vào khu vực chọn ghế<br>3. Dev team túc trực monitor P99 Latency & Error Rate | Vận hành bán vé chính thức |
+| **T + 30 Phút** | Product Owner & Lead Dev | 1. Vé bán hết hoặc lưu lượng hạ nhiệt: Đóng hàng chờ<br>2. Scale-in app instances về mức bình thường<br>3. Đối soát nhanh số vé đã bán vs. số tiền nhận | Hoàn tất đợt mở bán |
+
+---
+
+## 8. Giám Sát & Quan Sát Hệ Thống (Observability Stack)
+
+| Công cụ | Vai trò | Tích hợp |
+|---|---|---|
+| **Spring Boot Actuator** | Health check, Metrics endpoint (`/actuator/health`, `/actuator/metrics`) | Tích hợp sẵn trong app |
+| **Prometheus** | Thu thập metrics từ Actuator endpoint | Cấu hình scrape job trong prometheus.yml |
+| **Grafana** | Dashboard hiển thị P50/P95/P99 Latency, Error Rate, JVM Heap Usage | Import dashboard từ Grafana Community |
+| **Logback + ELK** | Structured JSON logging → Elasticsearch → Kibana | Cấu hình Logback appender |
+| **Sentry** | Theo dõi Exception & Error Tracking real-time | Tích hợp Sentry SDK cho Spring Boot |

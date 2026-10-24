@@ -1,4 +1,4 @@
-# UC07 — Đặt Vé & Thanh Toán (Order Checkout & Payment)
+﻿# UC07 — Đặt Vé & Thanh Toán (Order Checkout & Payment)
 
 ## 1. Thông Tin Chung
 
@@ -166,3 +166,4 @@ Use case này bao gồm toàn bộ luồng từ khi customer xác nhận chọn 
 | UC07.5 — Xử lý IPN Webhook | System | VNPay / MoMo | Validate HMAC + khớp tiền + idempotency |
 | UC07.6 — Phát hành vé điện tử | System | Ticket Service, QR Service | Sau khi IPN SUCCESS |
 | UC07.7 — Gửi thông báo xác nhận | System | Email Service, Push Service | Email + Push trong < 30s |
+

@@ -1,4 +1,4 @@
-# UC11 — Tạo & Quản Lý Concert (Organizer)
+﻿# UC11 — Tạo & Quản Lý Concert (Organizer)
 
 ## 1. Thông Tin Chung
 
@@ -143,3 +143,4 @@ Use case này mô tả toàn bộ quy trình Organizer tạo một concert mới
 | UC11.6 — Xem Dashboard bán vé | Organizer | — | Real-time; Organizer-scoped |
 | UC11.7 — Xem báo cáo check-in hiện trường | Organizer | — | Ngày diễn ra sự kiện |
 | UC11.8 — Yêu cầu quyết toán doanh thu | Organizer | Finance Service | Sau khi COMPLETED |
+

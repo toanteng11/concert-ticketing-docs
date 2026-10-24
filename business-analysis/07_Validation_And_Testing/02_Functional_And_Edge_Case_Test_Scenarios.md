@@ -1,4 +1,4 @@
-# 02 — Kịch Bản Kiểm Thử Chức Năng & Các Ca Biên Khắt Khe (Functional & Edge Case Test Scenarios)
+﻿# 02 — Kịch Bản Kiểm Thử Chức Năng & Các Ca Biên Khắt Khe (Functional & Edge Case Test Scenarios)
 
 ## 1. Giới Thiệu & Phân Loại Kiểm Thử
 
@@ -49,3 +49,4 @@
 | **EC-013** | Xâm nhập trái phép | Hacker thay đổi `order_id` trên thanh URL để xem vé của người khác | User A đăng nhập tài khoản của mình nhưng cố tình gọi `GET /api/v1/orders/{order_id_cua_User_B}` | **Chống IDOR:** Service đối chiếu `orders.user_id != jwt.user_id`; lập tức chặn với mã `403 Forbidden` và ghi vết vào Audit Log an ninh. |
 | **EC-014** | Cháy hàng (Sold Out)| Người dùng thứ $5.001$ trong hàng chờ khi vé vừa được bán hết | Vé chiếc cuối cùng vừa được thanh toán thành công lúc 10:15:20 | **Broadcast Sold-out:** Hệ thống cập nhật concert sang `SOLD_OUT`; gửi tín hiệu WebSocket tới toàn bộ người đang đứng trong phòng chờ: *"Sự kiện đã bán hết vé"*. |
 | **EC-015** | Đứt kết nối Webhook | Cổng VNPay gửi IPN nhưng server hệ thống bị nghẽn mạng không nhận được | VNPay gọi webhook lần 1 bị timeout 5 giây | **Idempotent Retry:** VNPay tự động gọi lại lần 2 và lần 3 sau 5 phút; hệ thống nhận được xử lý bình thường; ghi nhận đúng trạng thái không làm mất vé của khách. |
+

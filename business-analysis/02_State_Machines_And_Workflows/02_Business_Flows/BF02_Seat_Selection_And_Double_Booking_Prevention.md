@@ -1,4 +1,4 @@
-# BF02 — Business Flow: Chọn Ghế & Ngăn Chặn Double-Booking (Seat Selection & Double-Booking Prevention)
+﻿# BF02 — Business Flow: Chọn Ghế & Ngăn Chặn Double-Booking (Seat Selection & Double-Booking Prevention)
 
 ## 1. Mục Đích
 
@@ -199,3 +199,4 @@ flowchart LR
 | **Layer 3 — Redis Distributed Lock** | `SET NX EX` — Atomic; chỉ 1 user giành lock | < 5ms | Ngăn đồng thời ở tầng cache; phản hồi nhanh |
 | **Layer 4 — Database Optimistic Lock** | `WHERE status='AVAILABLE' AND version=N` | < 20ms | Đảm bảo tính nhất quán dữ liệu dù Redis fail |
 | **Layer 5 — Audit Log** | Ghi nhận tất cả attempt HOLD, thành công và thất bại | Async | Phục vụ điều tra tranh chấp và bảo mật |
+

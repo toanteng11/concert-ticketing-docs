@@ -1,4 +1,4 @@
-# UC03 — Quản Lý Tài Khoản Người Dùng (Admin Account Management)
+﻿# UC03 — Quản Lý Tài Khoản Người Dùng (Admin Account Management)
 
 ## 1. Thông Tin Chung
 
@@ -85,3 +85,4 @@ Use case này cho phép Admin quản lý toàn bộ tài khoản người dùng 
 | AC-03-03-02 | Hệ thống lưu lịch sử phân quyền: ai cấp, khi nào, tài khoản nào được cấp | Functional |
 | AC-03-03-03 | Organizer mới (chưa xác minh doanh nghiệp đầy đủ) bị giới hạn tối đa 2 concert đang hoạt động (BR-CON-007) | Functional |
 | AC-03-03-04 | Admin có thể thu hồi quyền Organizer bất kỳ lúc nào; Organizer bị thu hồi quyền không còn truy cập được Organizer Portal | Functional |
+

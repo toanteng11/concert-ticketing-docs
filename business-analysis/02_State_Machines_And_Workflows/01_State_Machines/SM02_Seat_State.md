@@ -1,4 +1,4 @@
-# SM02 — State Machine: Seat (Trạng Thái Ghế Ngồi)
+﻿# SM02 — State Machine: Seat (Trạng Thái Ghế Ngồi)
 
 ## 1. Mục Đích
 
@@ -159,3 +159,4 @@ Mỗi khi ghế thay đổi trạng thái, hệ thống phát sự kiện WebSoc
 | **INV-SEAT-04** | Ghế ở trạng thái `SOLD` luôn phải liên kết với đúng một `ticket_id` hợp lệ. |
 | **INV-SEAT-05** | Không thể chuyển thẳng từ `AVAILABLE` sang `SOLD` mà không qua trạng thái `HELD` (đảm bảo luồng tạo đơn hàng). |
 | **INV-SEAT-06** | Chuyển trạng thái `HELD → AVAILABLE` (giải phóng) chỉ được thực hiện bởi chính `hold_user_id` đang giữ hoặc bởi System (auto-release). Không một người dùng nào khác được giải phóng ghế của người khác. |
+

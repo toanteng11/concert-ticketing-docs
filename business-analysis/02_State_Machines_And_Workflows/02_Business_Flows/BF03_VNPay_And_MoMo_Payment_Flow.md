@@ -1,4 +1,4 @@
-# BF03 — Business Flow: Luồng Thanh Toán VNPay & MoMo (Payment Flow)
+﻿# BF03 — Business Flow: Luồng Thanh Toán VNPay & MoMo (Payment Flow)
 
 ## 1. Mục Đích
 
@@ -162,3 +162,4 @@ flowchart TD
 | `POST` | `/api/v1/webhooks/vnpay/ipn` | Nhận IPN từ VNPay (server-to-server) |
 | `POST` | `/api/v1/webhooks/momo/ipn` | Nhận IPN từ MoMo (server-to-server) |
 | `GET` | `/api/v1/payments/{txn_id}/status` | Kiểm tra trạng thái giao dịch (polling fallback) |
+

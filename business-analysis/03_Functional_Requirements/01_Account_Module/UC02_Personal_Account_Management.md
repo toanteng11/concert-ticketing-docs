@@ -1,4 +1,4 @@
-# UC02 — Quản Lý Thông Tin Tài Khoản Cá Nhân (Personal Account Management)
+﻿# UC02 — Quản Lý Thông Tin Tài Khoản Cá Nhân (Personal Account Management)
 
 ## 1. Thông Tin Chung
 
@@ -101,3 +101,4 @@ Use case này cho phép khách hàng xem và cập nhật thông tin hồ sơ c�
 | AC-02-04-01 | Hiển thị danh sách 10 phiên đăng nhập gần nhất: Thời gian, thiết bị, IP, địa điểm (dựa trên IP geolocation) | Functional |
 | AC-02-04-02 | Có nút "Đăng xuất khỏi tất cả thiết bị khác" — vô hiệu hóa toàn bộ Refresh Token ngoài phiên hiện tại | Security |
 | AC-02-04-03 | Lịch sử hoạt động được lưu tối thiểu 90 ngày | Functional |
+

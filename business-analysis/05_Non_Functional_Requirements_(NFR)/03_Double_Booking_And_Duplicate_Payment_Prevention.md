@@ -1,4 +1,4 @@
-# 03 — Cơ Chế Chống Bán Trùng Ghế & Chống Thanh Toán Trùng (Double-Booking & Duplicate Payment Prevention)
+﻿# 03 — Cơ Chế Chống Bán Trùng Ghế & Chống Thanh Toán Trùng (Double-Booking & Duplicate Payment Prevention)
 
 ## 1. Giới Thiệu & Bản Chất Cốt Lõi Của Vấn Đề
 
@@ -45,12 +45,12 @@ end
 
 ## 3. Giao Thức Đặt Ghế Hai Pha (Two-Phase Seat Reservation Protocol)
 
-Để đảm bảo tính nhất quán tuyệt đối giữa bộ nhớ tạm Redis và cơ sở dữ liệu bền vững PostgreSQL, quy trình đặt vé tuân thủ giao thức 2 pha:
+Để đảm bảo tính nhất quán tuyệt đối giữa bộ nhớ tạm Redis và cơ sở dữ liệu bền vững MySQL 8.0, quy trình đặt vé tuân thủ giao thức 2 pha:
 
 ### Pha 1: Giữ Ghế Tạm Thời (Temporary Hold Phase)
 1. **Bước 1.1:** Người dùng bấm chọn 1–4 ghế trên sơ đồ.
 2. **Bước 1.2:** Service gọi lệnh Redis `SET NX EX 600` cho toàn bộ các ghế được chọn trong một lệnh Multi-Exec hoặc Lua Script tổng thể. Nếu có bất kỳ ghế nào thất bại $\rightarrow$ Hủy bỏ toàn bộ (All-or-Nothing).
-3. **Bước 1.3:** Khi Redis xác nhận khóa thành công, Service ghi bản ghi vào cơ sở dữ liệu PostgreSQL:
+3. **Bước 1.3:** Khi Redis xác nhận khóa thành công, Service ghi bản ghi vào cơ sở dữ liệu MySQL 8.0:
    ```sql
    INSERT INTO seat_holds (id, user_id, seat_id, expires_at, status)
    VALUES ('hold_uuid', 'usr_555', 'seat_888', NOW() + INTERVAL '10 minutes', 'ACTIVE');
@@ -60,7 +60,7 @@ end
 ### Pha 2: Chốt Bán Chính Thức (Final Commit Phase)
 1. **Bước 2.1:** Khách hàng thanh toán thành công qua cổng thanh toán VNPay/MoMo.
 2. **Bước 2.2:** Webhook của cổng thanh toán gọi về hệ thống với trạng thái `SUCCESS`.
-3. **Bước 2.3:** Hệ thống mở một Transaction ACID trong PostgreSQL với mức cô lập `READ COMMITTED`:
+3. **Bước 2.3:** Hệ thống mở một Transaction ACID trong MySQL 8.0 với mức cô lập `READ COMMITTED`:
    ```sql
    BEGIN;
    -- 1. Khóa hàng ghế để kiểm tra trạng thái
@@ -125,3 +125,4 @@ Các cổng thanh toán (VNPay, MoMo) thường có cơ chế gửi lại Webhoo
   ALTER TABLE payment_transactions ADD CONSTRAINT uk_provider_transaction_id UNIQUE (provider, provider_transaction_id);
   ```
 - Nếu bản ghi đã tồn tại và đơn hàng đã ở trạng thái `PAID`: Hệ thống bỏ qua bước xử lý trừ vé, ngay lập tức trả về mã phản hồi thành công `HTTP 200 / RspCode: 00` cho Cổng thanh toán để đối tác dừng gửi lại.
+

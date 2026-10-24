@@ -1,4 +1,4 @@
-# Từ Điển Thuật Ngữ (Glossary)
+﻿# Từ Điển Thuật Ngữ (Glossary)
 
 ## Mục đích
 
@@ -154,4 +154,5 @@ Tài liệu này định nghĩa thống nhất tất cả thuật ngữ, trạng
 - [`02_Actor_Permissions.md`](./02_Actor_Permissions.md)
 - [`03_Business_Rules_Catalog_(Business_Rules).md`](./03_Business_Rules_Catalog_(Business_Rules).md)
 - [`02_State_Machines_And_Workflows/`](../02_State_Machines_And_Workflows/)
+
 

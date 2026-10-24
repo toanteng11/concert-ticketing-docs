@@ -1,4 +1,4 @@
-# BF04 — Business Flow: Hủy Đơn & Chính Sách Hoàn Tiền (Order Cancellation & Refund Policy)
+﻿# BF04 — Business Flow: Hủy Đơn & Chính Sách Hoàn Tiền (Order Cancellation & Refund Policy)
 
 ## 1. Mục Đích
 
@@ -192,3 +192,4 @@ sequenceDiagram
 | **Concert bị hủy bởi Admin** | Bất kỳ thời điểm nào | 100% giá vé | Hệ thống (Auto) | 1–15 ngày |
 | **Late Payment Callback** | Tiền trừ nhưng ghế đã mất | 100% số tiền đã trừ | Hệ thống (Auto) | 1–15 ngày |
 | **Vé đã check-in** | Bất kỳ lý do nào | 0% — Không hoàn | Không cho phép | — |
+

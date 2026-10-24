@@ -1,4 +1,4 @@
-# Stakeholders và Mục Tiêu Kinh Doanh
+﻿# Stakeholders và Mục Tiêu Kinh Doanh
 
 ## Mục đích
 
@@ -116,3 +116,4 @@ Tài liệu này xác định tất cả các bên liên quan (stakeholders) c�
 - [`01_Business_Overview/03_Business_Rules_Catalog_(Business_Rules).md`](../01_Business_Overview/03_Business_Rules_Catalog_(Business_Rules).md)
 - [`02_State_Machines_And_Workflows/`](../02_State_Machines_And_Workflows/)
 - [`00_Project_Governance/02_Scope_Assumptions_Constraints_And_Dependencies.md`](./02_Scope_Assumptions_Constraints_And_Dependencies.md)
+

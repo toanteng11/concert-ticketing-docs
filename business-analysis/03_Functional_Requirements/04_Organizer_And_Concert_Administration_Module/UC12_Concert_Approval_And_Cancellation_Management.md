@@ -1,4 +1,4 @@
-# UC12 — Phê Duyệt & Quản Lý Concert (Admin)
+﻿# UC12 — Phê Duyệt & Quản Lý Concert (Admin)
 
 ## 1. Thông Tin Chung
 
@@ -117,3 +117,4 @@ Use case này mô tả quy trình Admin xem xét hồ sơ concert do Organizer g
 | UC12.5 — Hủy concert khẩn cấp | Admin | Refund Service, Notification Service | Yêu cầu 2FA; Batch Refund |
 | UC12.6 — Chỉnh sửa thông tin concert (Admin override) | Admin | — | Trường hợp đặc biệt |
 | UC12.7 — Đóng/Mở hàng chờ thủ công | Admin | Queue Service | Override tự động |
+
