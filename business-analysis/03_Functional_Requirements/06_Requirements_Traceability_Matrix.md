@@ -1,82 +1,108 @@
-﻿# 06 — Ma Trận Truy Vết Yêu Cầu (Requirements Traceability Matrix - RTM)
+# 06 — Ma trận truy vết yêu cầu (Requirements Traceability Matrix)
 
-## 1. Giới Thiệu & Mục Đích
+## Mục đích và quy ước
 
-Ma Trận Truy Vết Yêu Cầu (**Requirements Traceability Matrix — RTM**) là công cụ trung tâm liên kết chặt chẽ giữa **Quy tắc Nghiệp vụ (Business Rules - BR)**, **Yêu Cầu Chức Năng (Use Cases & User Stories)**, **Thực thể Dữ liệu (Database Entities)** và **Kịch bản Kiểm thử Nghiệm thu (Test Scenarios / Acceptance Criteria)**.
+Ma trận nối các mã quy tắc thực sự có trong Business Rules Catalog với use case, luồng/state machine và tài liệu xác nhận. Mã BR phải khớp nguyên văn catalog; tham chiếu scenario là nhóm cần đối chiếu, không khẳng định mọi rule đã có test tự động riêng.
 
-Tài liệu này được xây dựng nhằm phục vụ:
-1. **System Architect & Designer:** Nắm bắt toàn bộ luồng dữ liệu, các bảng bị ảnh hưởng và biên giới dịch vụ khi vẽ Kiến trúc Modular Monolith và ERD.
-2. **Software Engineers:** Đối chiếu yêu cầu nghiệp vụ và các ràng buộc khi cài đặt logic API và trạng thái hệ thống.
-3. **QA / Tester:** Thiết kế đầy đủ bộ Test Case bao phủ 100% các điều kiện biên, luồng ngoại lệ và quy tắc kinh doanh.
-4. **Project Manager / Product Owner:** Kiểm soát phạm vi dự án, đảm bảo không có yêu cầu nào bị bỏ sót (Zero Requirement Gap).
+**Trạng thái:** Mỗi BR được nối với use case, luồng/state và tiêu chí/scenario theo miền. “Execution evidence pending” có nghĩa là chưa có kết quả chạy trong tài liệu; trạng thái này không khẳng định tính năng đã triển khai hay UAT đã hoàn tất.
 
----
+<!-- BEGIN MERMAID DIAGRAM RTM-TRACEABILITY -->
+### Sơ đồ truy vết BR đến bằng chứng kiểm thử
 
-## 2. Bảng Ma Trận Truy Vết Tổng Thể (Master Traceability Matrix)
+```mermaid
+flowchart LR
+  rules["Business Rules Catalog<br/>BR IDs"]
+  reqs["Functional Requirements<br/>UCs"]
+  models["Business Flows / State Machines<br/>BFs / SMs"]
+  acceptance["Acceptance Criteria<br/>UC / UAT"]
+  scenarios["Functional / Edge Scenarios<br/>FS / EC"]
+  evidence["Execution evidence and status"]
+  baseline["Decision baseline<br/>D-023, D-024"]
+  rules --> reqs
+  rules --> models
+  reqs --> acceptance
+  models --> acceptance
+  acceptance --> scenarios --> evidence
+  baseline -.->|defines expected behavior| acceptance
+  note["A reference in the matrix means a related artifact exists; it does not confirm one-to-one acceptance-test coverage."]
+  scenarios -.-> note
+```
+<!-- END MERMAID DIAGRAM RTM-TRACEABILITY -->
 
-| Mã BR | Tên Quy Tắc Nghiệp Vụ | Use Case Liên Quan | Mã User Story | Actor Thực Hiện | Bảng Dữ Liệu Bị Ảnh Hưởng | Phương Pháp Kiểm Thử & Tiêu Chí Nghiệm Thu |
-|---|---|---|---|---|---|---|
-| **BR-ACC-001** | Định dạng số điện thoại & mật khẩu chuẩn VN | UC01, UC02 | US-01-01, US-02-01 | Customer | `users`, `user_credentials` | Unit & Functional Test: Validate Regex SĐT VN, độ dài pass $\ge 8$ ký tự |
-| **BR-ACC-002** | Cơ chế xác thực JWT, Refresh Token & Phiên | UC01, UC02, UC03 | US-01-02, US-02-02, US-03-02 | Customer, Admin | `user_sessions`, `refresh_tokens` | Security Test: Thu hồi token khi đổi pass hoặc bị khóa tài khoản |
-| **BR-ACC-003** | Khóa tài khoản sau 5 lần nhập sai mật khẩu | UC01 | US-01-02 | Customer, System | `login_attempts`, `users` | Security Test: Thử đăng nhập sai 5 lần liên tiếp $\rightarrow$ Khóa 15 phút |
-| **BR-CON-001** | Vòng đời trạng thái Concert 6 giai đoạn | UC11, UC12 | US-11-01, US-12-01, US-12-02 | Organizer, Admin | `concerts`, `concert_history` | State Transition Test: `DRAFT` $\rightarrow$ `PENDING` $\rightarrow$ `PUBLISHED` $\rightarrow$ `ON_SALE` $\rightarrow$ `COMPLETED` |
-| **BR-CON-002** | Khóa chỉnh sửa thông tin khi Concert đang mở bán | UC11 | US-11-02 | Organizer | `concerts`, `ticket_zones` | Functional Test: Khi `ON_SALE`, chặn sửa giá vé, sơ đồ ghế và số lượng |
-| **BR-CON-003** | Duyệt Concert bởi Admin trong vòng 48h (SLA) | UC12 | US-12-01 | Admin | `concerts`, `approval_logs` | Performance & SLA Test: Cảnh báo quá hạn 48h, lưu Audit Log duyệt |
-| **BR-CON-004** | Quy định hủy Concert & Hoàn tiền tự động 100% | UC12, UC09 | US-12-02, US-09-02 | Admin, Organizer, System | `concerts`, `orders`, `refunds` | Integration Test: Hủy concert kích hoạt hoàn tiền tự động 100% cho toàn bộ vé |
-| **BR-CON-005** | Giới hạn 2 concert hoạt động cho Organizer mới | UC03, UC11 | US-03-03, US-11-01 | Admin, Organizer | `organizer_profiles`, `concerts` | Business Logic Test: Chặn tạo concert thứ 3 nếu tài khoản chưa được xác minh |
-| **BR-QUE-001** | Kích hoạt Phòng chờ ảo trước giờ mở bán 15 phút | UC04, UC05 | US-04-02 | System, Customer | `virtual_queues`, `waiting_room_sessions` | Load & Stress Test: Bắt đầu giữ hàng lúc $T - 15$ phút, phát số thứ tự ngẫu nhiên lúc $T$ |
-| **BR-QUE-002** | Giới hạn 5.000 CCU đồng thời trong khu vực chọn ghế | UC05, UC06 | US-05-01, US-06-01 | System, Customer | Redis Queue, `active_selectors` | Load Test: 100K người xếp hàng, xả theo đợt 5.000 người vào vùng chọn ghế |
-| **BR-QUE-003** | Thu hồi vị trí hàng chờ khi không hoạt động quá 2 phút | UC05, UC06 | US-05-02 | System, Customer | Redis Heartbeat | E2E Test: Để tab treo 120 giây không tương tác $\rightarrow$ Đẩy ra cuối hàng chờ |
-| **BR-SET-001** | Tuyệt đối không bán trùng ghế (Zero Double-Booking) | UC06 | US-06-01, US-06-02 | Customer, System | `seats`, `seat_holds`, Redis Key | Concurrency Stress Test: 10.000 user cùng chọn 1 ghế $\rightarrow$ Duy nhất 1 người thành công |
-| **BR-SET-002** | Giữ ghế tối đa 10 phút đếm ngược (Hold Timeout) | UC06, UC07, UC15 | US-06-01, US-07-01, US-15-02 | Customer, System | `seat_holds`, Redis TTL (600s) | Automated Test: Hết 600s chưa thanh toán $\rightarrow$ Tự động chuyển về `AVAILABLE` |
-| **BR-SET-003** | Giới hạn số lượng tối đa 4 vé / người / giao dịch | UC06 | US-06-02 | Customer | `seat_holds`, `order_items` | Functional Test: Cố chọn 5 ghế $\rightarrow$ Báo lỗi vượt quá số lượng tối đa |
-| **BR-ORD-001** | Tạo đơn hàng gắn liền với Khóa giữ ghế (Seat Hold Token) | UC06, UC07 | US-06-01, US-07-01 | Customer | `orders`, `order_items`, `seat_holds` | Integration Test: Chặn tạo đơn nếu Token giữ ghế không hợp lệ hoặc đã quá hạn |
-| **BR-ORD-002** | Tính toán tổng tiền, chiết khấu và phí xử lý chính xác | UC07 | US-07-02 | Customer, System | `orders`, `vouchers` | Financial Unit Test: So sánh tổng tiền chi tiết, làm tròn đơn vị đồng |
-| **BR-ORD-003** | Kiểm tra quyền sở hữu đơn hàng (Chống lỗ hổng IDOR) | UC08, UC09 | US-08-01, US-09-01 | Customer | `orders`, `tickets` | Security Audit: User A không thể xem đơn hàng hoặc vé của User B qua API |
-| **BR-ORD-004** | Chính sách hủy đơn & Tỷ lệ hoàn tiền theo thời gian | UC09 | US-09-01, US-09-02 | Customer, Admin | `orders`, `refunds` | Business Logic Test: $\ge 7$ ngày = 100%, 3–6 ngày = 50%, $< 3$ ngày = 0% |
-| **BR-PAY-001** | Bắt buộc sử dụng Idempotency Key trong giao dịch | UC07 | US-07-02 | Customer, Payment Gateway | `payment_transactions` | Network Chaos Test: Gọi lại URL thanh toán nhiều lần $\rightarrow$ Không tạo giao dịch trùng |
-| **BR-PAY-002** | Tích hợp cổng thanh toán VNPay và MoMo với Webhook | UC07 | US-07-02 | Payment Gateway, System | `payment_transactions`, `payment_logs` | Webhook Integration Test: Xử lý IPN callback, xác minh chữ ký bảo mật SHA256 |
-| **BR-PAY-003** | Xử lý thanh toán thành công sau khi ghế đã hết hạn giữ | UC07, UC09 | US-07-03, US-09-02 | System, Payment Gateway | `orders`, `refunds`, `seats` | Edge Case Test: Tiền trừ nhưng ghế đã bị người khác mua $\rightarrow$ Kích hoạt Auto-Refund 100% |
-| **BR-PAY-004** | Thời hạn xử lý hoàn tiền tự động 3–5 ngày làm việc | UC09, UC12 | US-09-02, US-12-02 | System, Payment Gateway | `refunds`, `bank_transfers` | E2E Integration Test: Gọi Refund API đối tác, cập nhật trạng thái `REFUNDED` |
-| **BR-PAY-005** | Đối soát giao dịch tự động hàng ngày lúc 02:00 sáng | UC13 | US-13-02 | Admin, System | `reconciliation_records` | Batch Job Test: So khớp dữ liệu nội bộ và file sao kê ngân hàng đối tác |
-| **BR-TCK-001** | Mã QR Code động (Dynamic TOTP) thay đổi mỗi 30s | UC08, UC14 | US-08-02, US-14-01 | Customer, Check-in Staff | `tickets`, `qr_tokens` | Security Test: Ảnh chụp màn hình sau 30s bị từ chối tại cổng soát vé |
-| **BR-TCK-002** | Nguyên tắc một lần quét duy nhất (Single-Scan Check-in) | UC14 | US-14-01 | Check-in Staff | `tickets`, `checkin_logs` | Real-time Test: Quét vé lần 2 tại cổng khác $\rightarrow$ Báo động đỏ `ALREADY_USED` trong $\le 300\text{ms}$ |
-| **BR-TCK-003** | Vé hủy hoặc hoàn tiền không được phép vào cổng | UC14 | US-14-01 | Check-in Staff | `tickets`, `checkin_logs` | Gate Test: Vé trạng thái `CANCELLED` quét tại cổng bị từ chối lập tức |
-| **BR-TCK-004** | Hỗ trợ soát vé chế độ Offline khi mất mạng Internet | UC14 | US-14-02 | Check-in Staff | Local SQLite DB, `sync_queue` | Resilience Test: Cắt mạng hoàn toàn $\rightarrow$ Quét ngoại tuyến và đồng bộ lại khi có mạng |
-| **BR-REV-001** | Chỉ người tham gia thực tế (Verified Attendee) được đánh giá | UC10 | US-10-01 | Customer | `reviews`, `tickets` | Functional Test: Tài khoản chưa mua vé hoặc vé chưa qua cổng check-in bị chặn đánh giá |
-| **BR-REV-002** | Đánh giá chỉ mở trong vòng 7 ngày sau khi concert kết thúc | UC10 | US-10-01 | Customer | `reviews`, `concerts` | Time-window Test: Đánh giá quá 7 ngày kể từ kết thúc sự kiện bị đóng |
-| **BR-NOTI-001** | Bắt buộc gửi thông báo xác nhận giao dịch & mã vé | UC15 | US-15-01 | System | `notifications`, `notification_logs` | Performance Test: Email & Push gửi đến trong $\le 5\text{s}$ sau thanh toán thành công |
-| **BR-NOTI-002** | Cơ chế chuyển kênh dự phòng (Channel Fallback) | UC15 | US-15-01 | System | `notifications`, Notification Router | Reliability Test: Push Notification lỗi $\rightarrow$ Tự động chuyển phát qua Email / SMS |
-| **BR-NOTI-003** | Khử trùng lặp thông báo (Notification Deduplication) | UC15 | US-15-01 | System | Redis Deduplication Key | Chaos Test: Gửi trùng lặp message broker $\rightarrow$ Người dùng chỉ nhận 1 thông báo |
+| BR ID | Miền | Use case / flow / state liên quan | Tiêu chí / scenario xác nhận | Trạng thái |
+|---|---|---|---|---|
+| BR-QUEUE-001 | Hàng chờ | UC05–UC06; BF01; queue admission rules | AC-UAT-02.1–02.2, 02.7; FS-004; EC-003–004 | Domain link recorded; execution evidence pending |
+| BR-QUEUE-002 | Hàng chờ | UC05–UC06; BF01; queue admission rules | AC-UAT-02.1–02.2, 02.7; FS-004; EC-003–004 | Domain link recorded; execution evidence pending |
+| BR-QUEUE-003 | Hàng chờ | UC05–UC06; BF01; queue admission rules | AC-UAT-02.1–02.2, 02.7; FS-004; EC-003–004 | Domain link recorded; execution evidence pending |
+| BR-QUEUE-004 | Hàng chờ | UC05–UC06; BF01; queue admission rules | AC-UAT-02.1–02.2, 02.7; FS-004; EC-003–004 | Domain link recorded; execution evidence pending |
+| BR-QUEUE-005 | Hàng chờ | UC05–UC06; BF01; queue admission rules | AC-UAT-02.1–02.2, 02.7; FS-004; EC-003–004 | Domain link recorded; execution evidence pending |
+| BR-QUEUE-006 | Hàng chờ | UC05–UC06; BF01; queue admission rules | AC-UAT-02.1–02.2, 02.7; FS-004; EC-003–004 | Domain link recorded; execution evidence pending |
+| BR-QUEUE-007 | Hàng chờ | UC05–UC06; BF01; queue admission rules | AC-UAT-02.1–02.2, 02.7; FS-004; EC-003–004 | Domain link recorded; execution evidence pending |
+| BR-QUEUE-008 | Hàng chờ | UC05–UC06; BF01; queue admission rules | AC-UAT-02.1–02.2, 02.7; FS-004; EC-003–004 | Domain link recorded; execution evidence pending |
+| BR-SEAT-001 | Ghế và giữ chỗ | UC05–UC06; BF02; SM02 | AC-UAT-02.3–02.7; FS-006; EC-001–002, 004–005 | Domain link recorded; execution evidence pending |
+| BR-SEAT-002 | Ghế và giữ chỗ | UC05–UC06; BF02; SM02 | AC-UAT-02.3–02.7; FS-006; EC-001–002, 004–005 | Domain link recorded; execution evidence pending |
+| BR-SEAT-003 | Ghế và giữ chỗ | UC05–UC06; BF02; SM02 | AC-UAT-02.3–02.7; FS-006; EC-001–002, 004–005 | Domain link recorded; execution evidence pending |
+| BR-SEAT-004 | Ghế và giữ chỗ | UC05–UC06; BF02; SM02 | AC-UAT-02.3–02.7; FS-006; EC-001–002, 004–005 | Domain link recorded; execution evidence pending |
+| BR-SEAT-005 | Ghế và giữ chỗ | UC05–UC06; BF02; SM02 | AC-UAT-02.3–02.7; FS-006; EC-001–002, 004–005 | Domain link recorded; execution evidence pending |
+| BR-SEAT-006 | Ghế và giữ chỗ | UC05–UC06; BF02; SM02 | AC-UAT-02.3–02.7; FS-006; EC-001–002, 004–005 | Domain link recorded; execution evidence pending |
+| BR-SEAT-007 | Ghế và giữ chỗ | UC05–UC06; BF02; SM02 | AC-UAT-02.3–02.7; FS-006; EC-001–002, 004–005 | Domain link recorded; execution evidence pending |
+| BR-SEAT-008 | Ghế và giữ chỗ | UC05–UC06; BF02; SM02 | AC-UAT-02.3–02.7; FS-006; EC-001–002, 004–005 | Domain link recorded; execution evidence pending |
+| BR-ORD-001 | Đơn hàng | UC06–UC09; BF03–BF04; SM03 | AC-UAT-03.1–03.4; FS-008, FS-011; EC-005–006 | Domain link recorded; execution evidence pending |
+| BR-ORD-002 | Đơn hàng | UC06–UC09; BF03–BF04; SM03 | AC-UAT-03.1–03.4; FS-008, FS-011; EC-005–006 | Domain link recorded; execution evidence pending |
+| BR-ORD-003 | Đơn hàng | UC06–UC09; BF03–BF04; SM03 | AC-UAT-03.1–03.4; FS-008, FS-011; EC-005–006 | Domain link recorded; execution evidence pending |
+| BR-ORD-004 | Đơn hàng | UC06–UC09; BF03–BF04; SM03 | AC-UAT-03.1–03.4; FS-008, FS-011; EC-005–006 | Domain link recorded; execution evidence pending |
+| BR-ORD-005 | Đơn hàng | UC06–UC09; BF03–BF04; SM03 | AC-UAT-03.1–03.4; FS-008, FS-011; EC-005–006 | Domain link recorded; execution evidence pending |
+| BR-ORD-006 | Đơn hàng | UC06–UC09; BF03–BF04; SM03 | AC-UAT-03.1–03.4; FS-008, FS-011; EC-005–006 | Domain link recorded; execution evidence pending |
+| BR-ORD-007 | Đơn hàng | UC06–UC09; BF03–BF04; SM03 | AC-UAT-03.1–03.4; FS-008, FS-011; EC-005–006 | Domain link recorded; execution evidence pending |
+| BR-ORD-008 | Đơn hàng | UC06–UC09; BF03–BF04; SM03 | AC-UAT-03.1–03.4; FS-008, FS-011; EC-005–006 | Domain link recorded; execution evidence pending |
+| BR-PAY-001 | Thanh toán | UC07; BF03; SM05 | AC-UAT-03.2–03.4, 03.6–03.7; FS-008; EC-005–006, 015 | Domain link recorded; execution evidence pending |
+| BR-PAY-002 | Thanh toán | UC07; BF03; SM05 | AC-UAT-03.2–03.4, 03.6–03.7; FS-008; EC-005–006, 015 | Domain link recorded; execution evidence pending |
+| BR-PAY-003 | Thanh toán | UC07; BF03; SM05 | AC-UAT-03.2–03.4, 03.6–03.7; FS-008; EC-005–006, 015 | Domain link recorded; execution evidence pending |
+| BR-PAY-004 | Thanh toán | UC07; BF03; SM05 | AC-UAT-03.2–03.4, 03.6–03.7; FS-008; EC-005–006, 015 | Domain link recorded; execution evidence pending |
+| BR-PAY-005 | Thanh toán | UC07; BF03; SM05 | AC-UAT-03.2–03.4, 03.6–03.7; FS-008; EC-005–006, 015 | Domain link recorded; execution evidence pending |
+| BR-PAY-006 | Thanh toán | UC07; BF03; SM05 | AC-UAT-03.2–03.4, 03.6–03.7; FS-008; EC-005–006, 015 | Domain link recorded; execution evidence pending |
+| BR-PAY-007 | Thanh toán | UC07; BF03; SM05 | AC-UAT-03.2–03.4, 03.6–03.7; FS-008; EC-005–006, 015 | Domain link recorded; execution evidence pending |
+| BR-PAY-008 | Thanh toán | UC07; BF03; SM05 | AC-UAT-03.2–03.4, 03.6–03.7; FS-008; EC-005–006, 015 | Domain link recorded; execution evidence pending |
+| BR-TCK-001 | Vé và check-in | UC08, UC14; BF06; SM04 | AC-UAT-05.1–05.4; FS-009–FS-010; EC-007–009 | Domain link recorded; execution evidence pending |
+| BR-TCK-002 | Vé và check-in | UC08, UC14; BF06; SM04 | AC-UAT-05.1–05.4; FS-009–FS-010; EC-007–009 | Domain link recorded; execution evidence pending |
+| BR-TCK-003 | Vé và check-in | UC08, UC14; BF06; SM04 | AC-UAT-05.1–05.4; FS-009–FS-010; EC-007–009 | Domain link recorded; execution evidence pending |
+| BR-TCK-004 | Vé và check-in | UC08, UC14; BF06; SM04 | AC-UAT-05.1–05.4; FS-009–FS-010; EC-007–009 | Domain link recorded; execution evidence pending |
+| BR-TCK-005 | Vé và check-in | UC08, UC14; BF06; SM04 | AC-UAT-05.1–05.4; FS-009–FS-010; EC-007–009 | Domain link recorded; execution evidence pending |
+| BR-TCK-006 | Vé và check-in | UC08, UC14; BF06; SM04 | AC-UAT-05.1–05.4; FS-009–FS-010; EC-007–009 | Domain link recorded; execution evidence pending |
+| BR-TCK-007 | Vé và check-in | UC08, UC14; BF06; SM04 | AC-UAT-05.1–05.4; FS-009–FS-010; EC-007–009 | Domain link recorded; execution evidence pending |
+| BR-TCK-008 | Vé và check-in | UC08, UC14; BF06; SM04 | AC-UAT-05.1–05.4; FS-009–FS-010; EC-007–009 | Domain link recorded; execution evidence pending |
+| BR-RFD-001 | Hoàn tiền | UC09, UC12; BF04–BF05; SM03/SM05 | AC-UAT-03.5–03.7, 04.5; FS-011; EC-010, 012 | Domain link recorded; execution evidence pending |
+| BR-RFD-002 | Hoàn tiền | UC09, UC12; BF04–BF05; SM03/SM05 | AC-UAT-03.5–03.7, 04.5; FS-011; EC-010, 012 | Domain link recorded; execution evidence pending |
+| BR-RFD-003 | Hoàn tiền | UC09, UC12; BF04–BF05; SM03/SM05 | AC-UAT-03.5–03.7, 04.5; FS-011; EC-010, 012 | Domain link recorded; execution evidence pending |
+| BR-RFD-004 | Hoàn tiền | UC09, UC12; BF04–BF05; SM03/SM05 | AC-UAT-03.5–03.7, 04.5; FS-011; EC-010, 012 | Domain link recorded; execution evidence pending |
+| BR-RFD-005 | Hoàn tiền | UC09, UC12; BF04–BF05; SM03/SM05 | AC-UAT-03.5–03.7, 04.5; FS-011; EC-010, 012 | Domain link recorded; execution evidence pending |
+| BR-RFD-006 | Hoàn tiền | UC09, UC12; BF04–BF05; SM03/SM05 | AC-UAT-03.5–03.7, 04.5; FS-011; EC-010, 012 | Domain link recorded; execution evidence pending |
+| BR-RFD-007 | Hoàn tiền | UC09, UC12; BF04–BF05; SM03/SM05 | AC-UAT-03.5–03.7, 04.5; FS-011; EC-010, 012 | Domain link recorded; execution evidence pending |
+| BR-CON-001 | Concert và duyệt | UC11–UC13; BF05; SM01 | AC-UAT-04.1–04.5; FS-012–FS-013; EC-011–012 | Domain link recorded; execution evidence pending |
+| BR-CON-002 | Concert và duyệt | UC11–UC13; BF05; SM01 | AC-UAT-04.1–04.5; FS-012–FS-013; EC-011–012 | Domain link recorded; execution evidence pending |
+| BR-CON-003 | Concert và duyệt | UC11–UC13; BF05; SM01 | AC-UAT-04.1–04.5; FS-012–FS-013; EC-011–012 | Domain link recorded; execution evidence pending |
+| BR-CON-004 | Concert và duyệt | UC11–UC13; BF05; SM01 | AC-UAT-04.1–04.5; FS-012–FS-013; EC-011–012 | Domain link recorded; execution evidence pending |
+| BR-CON-005 | Concert và quyết toán | UC11.8; UC13; BF05; SM01 | AC-UAT-04.6–04.8; AC-13-02-05–07; FS-012–013; EC-011–012 | Domain link recorded; execution evidence pending |
+| BR-CON-006 | Concert và hủy sự kiện | UC11; UC12; BF05; SM01 | AC-UAT-04.5, 04.9; FS-012; EC-012 | Domain link recorded; execution evidence pending |
+| BR-CON-007 | Concert và duyệt | UC11–UC13; BF05; SM01 | AC-UAT-04.1–04.5; FS-012–FS-013; EC-011–012 | Domain link recorded; execution evidence pending |
+| BR-CON-008 | Concert và duyệt | UC11–UC13; BF05; SM01 | AC-UAT-04.1–04.5; FS-012–FS-013; EC-011–012 | Domain link recorded; execution evidence pending |
+| BR-REV-001 | Đánh giá | UC10; review flow | UC10 acceptance criteria; FS-014 | Domain link recorded; execution evidence pending |
+| BR-REV-002 | Đánh giá | UC10; review flow | UC10 acceptance criteria; FS-014 | Domain link recorded; execution evidence pending |
+| BR-REV-003 | Đánh giá | UC10; review flow | UC10 acceptance criteria; FS-014 | Domain link recorded; execution evidence pending |
+| BR-REV-004 | Đánh giá | UC10; review flow | UC10 acceptance criteria; FS-014 | Domain link recorded; execution evidence pending |
+| BR-NOTI-001 | Thông báo | UC15; transactional outbox/RabbitMQ | AC-15-01-01–04, AC-15-02-01–03, AC-15-03-01–03; AC-UAT-05.5–05.7 | Domain link recorded; execution evidence pending |
+| BR-NOTI-002 | Thông báo | UC15; transactional outbox/RabbitMQ | AC-15-01-01–04, AC-15-02-01–03, AC-15-03-01–03; AC-UAT-05.5–05.7 | Domain link recorded; execution evidence pending |
+| BR-NOTI-003 | Thông báo | UC15; transactional outbox/RabbitMQ | AC-15-01-01–04, AC-15-02-01–03, AC-15-03-01–03; AC-UAT-05.5–05.7 | Domain link recorded; execution evidence pending |
+## Các khoảng trống cần xử lý
 
----
+- Ma trận hiện thể hiện liên kết ở cấp miền; khi thực hiện UAT, ghi kết quả/pass-fail, người chạy, ngày chạy và evidence theo từng AC liên quan. Không suy ra implementation hoặc kiểm thử đã hoàn tất chỉ từ việc có tài liệu.
+- D-023: có tiêu chí online-only/fail-closed tại UC14, BF06, SM04, UAT và EC-009; cần lưu evidence chạy trước go-live.
+- D-024: có tiêu chí ngày địa phương, ranh giới 0/2/3/6/7 tại UC09/BF04/UAT; cần lưu evidence cho từng ranh giới trước go-live.
+- Chỉ đổi trạng thái sau khi chỉ ra tiêu chí nghiệm thu và bằng chứng tương ứng.
 
-## 3. Ma Trận Phân Bổ Use Case Vào Các Microservice Kiến Trúc
+## Tài liệu nguồn
 
-Bảng phân bổ này giúp các kỹ sư kiến trúc phần mềm phân định ranh giới phụ trách của từng Microservice trong hệ thống:
-
-| Tên Microservice | Use Cases Phụ Trách | Trách Nhiệm Chính | Cơ Sở Dữ Liệu Sở Hữu |
-|---|---|---|---|
-| **Auth & Account Service** | UC01, UC02, UC03 | Đăng ký, đăng nhập, JWT/OAuth2, phân quyền RBAC, hồ sơ người dùng | MySQL 8.0 (`users`, `user_credentials`, `user_sessions`) |
-| **Concert & Catalog Service** | UC04, UC11, UC12 | Danh mục concert, nghệ sĩ, sơ đồ khán đài (zones, seats), duyệt sự kiện | MySQL 8.0 (`concerts`, `ticket_zones`, `venues`, `artists`) + Elasticsearch |
-| **Waiting Room & Queue Service** | UC04, UC05 | Quản lý hàng chờ ảo, xếp hàng ngẫu nhiên, điều tiết lưu lượng truy cập | Redis Cluster (Sorted Sets, Virtual Queue Tokens) |
-| **Booking & Reservation Service** | UC05, UC06 | Xem sơ đồ ghế real-time, khóa giữ ghế phân tán (Distributed Lock), timeout 10 phút | Redis (Seat Hold Locks) + MySQL 8.0 (`seat_holds`, `seats`) |
-| **Order & Checkout Service** | UC07, UC08, UC09 | Quản lý vòng đời đơn hàng, áp dụng voucher, tính toán hóa đơn | MySQL 8.0 (`orders`, `order_items`, `vouchers`) |
-| **Payment & Settlement Service** | UC07, UC09, UC13 | Tích hợp cổng VNPay/MoMo, xử lý webhook, hoàn tiền, đối soát tài chính | MySQL 8.0 (`payment_transactions`, `refunds`, `settlements`) |
-| **Ticket & Check-In Service** | UC08, UC14 | Phát hành mã Dynamic QR vé điện tử, giải mã xác thực vào cổng tốc độ cao | Redis + MySQL 8.0 (`tickets`, `checkin_logs`) + Offline SQLite |
-| **Review & Social Service** | UC10 | Đánh giá, xếp hạng sao, bình luận của khán giả thực tế (Verified Attendees) | MySQL 8.0 (`reviews`, `review_reports`) |
-| **Notification Engine** | UC15 | Định tuyến thông báo đa kênh (Email, Push, SMS, In-App), chống spam | MySQL 8.0 (`notification_logs`, `templates`) + Spring @Async Events |
-| **Analytics & Reporting Service** | UC13 | Tổng hợp số liệu bán vé, doanh thu, tỷ lệ lấp đầy ghế theo thời gian thực | MySQL Read Replica / MySQL 8.0 Read Replica |
-
----
-
-## 4. Ma Trận Phủ Thử Nghiệm Nghiệm Thu (Acceptance Test Coverage)
-
-| Nhóm Kiểm Thử | Số Lượng Use Case | Các Kịch Bản Trọng Điểm Cần Chú Ý | Loại Test Tương Ứng |
-|---|---|---|---|
-| **Bảo mật & Xác thực** | UC01, UC02, UC03, UC08, UC14 | SQL Injection, XSS, Brute-force mật khẩu, Đánh cắp Token, Lỗ hổng IDOR xem vé người khác, Chụp màn hình chia sẻ mã QR | Pen-test, Dynamic Application Security Testing (DAST) |
-| **Độ tin cậy & Concurrency** | UC05, UC06, UC07 | Race condition khi 10.000 user cùng chọn 1 ghế VIP duy nhất; Callback thanh toán đến muộn sau khi ghế bị hủy; Quá hạn giữ ghế | Concurrency Stress Test, Chaos Engineering |
-| **Hiệu năng & Tải cao** | UC04, UC05, UC06, UC14, UC15 | 100.000 người dùng đồng thời trong phòng chờ; Thời gian phản hồi quét vé tại cổng $\le 500\text{ms}$; Bắn 50.000 push notification trong 10 giây | Load Test (k6 / JMeter), Distributed Benchmarking |
-| **Tích hợp Bên Thứ Ba** | UC07, UC09, UC15 | Ngắt kết nối mạng giữa chừng khi VNPay đang xử lý; MoMo trả về lỗi timeout; SMS Gateway từ chối số điện thoại | Mocking, Stubbing, Network Delay Simulation |
-| **Toàn vẹn Nghiệp vụ Tài chính** | UC07, UC09, UC12, UC13 | Tiền hoàn trả tính toán đúng tỷ lệ theo ngày; Doanh thu đối soát không lệch 1 đồng; Không thanh toán thừa cho Organizer | Financial Audit Test, Database ACID Validation |
-
+- [Business Rules Catalog](<../01_Business_Overview/03_Business_Rules_Catalog_(Business_Rules).md>)
+- [Acceptance Criteria & UAT](../07_Validation_And_Testing/01_Acceptance_Criteria_And_UAT.md)
+- [Functional & Edge Case Scenarios](../07_Validation_And_Testing/02_Functional_And_Edge_Case_Test_Scenarios.md)
+- [Open Questions & Decision Log](../00_Project_Governance/03_Risks_Open_Questions_And_Decision_Log.md)

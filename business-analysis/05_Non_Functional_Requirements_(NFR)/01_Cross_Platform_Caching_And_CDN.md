@@ -1,4 +1,6 @@
-﻿# 01 — Đa Nền Tảng, Chiến Lược Bộ Đệm (Caching) & CDN
+# 01 — Đa Nền Tảng, Chiến Lược Bộ Đệm (Caching) & CDN
+
+> **Phạm vi:** check-in online-only; scanner fail-closed khi mất mạng theo D-023. Không dùng local cache để xác nhận vé.
 
 ## 1. Giới Thiệu & Mục Tiêu Kỹ Thuật
 
@@ -21,7 +23,7 @@ Mục tiêu kỹ thuật của tài liệu này:
   "success": true,
   "code": 200,
   "message": "Thao tác thành công",
-  "data": { ... },
+  "data": {},
   "meta": {
     "server_time": 1729774800,
     "request_id": "req-9a8b7c-4d3e"
@@ -36,7 +38,7 @@ Mục tiêu kỹ thuật của tài liệu này:
 |---|---|---|---|
 | **Cơ chế tải ứng dụng ban đầu** | Tải SPA Bundle qua CDN; nén Brotli | Cài đặt nhị phân từ App Store / Google Play | Cài đặt gói APK doanh nghiệp (Enterprise MDM) |
 | **Kênh thông báo đẩy** | Web Push API (Service Worker) | Apple Push Notification (APNs) & Firebase (FCM) | Âm thanh & Rung phần cứng tức thì |
-| **Lưu trữ ngoại tuyến** | IndexedDB / LocalStorage (Giới hạn) | SQLite / Realm (Lưu trữ mã vé mã hóa an toàn) | SQLite cục bộ (Danh sách hash vé để quét Offline) |
+| **Lưu trữ ngoại tuyến** | Cache tài nguyên không nhạy cảm; không làm nguồn sự thật giao dịch | Có thể xem tài liệu vé đã lưu; không xác thực check-in ngoại tuyến | Không lưu trạng thái vé để quét offline; fail-closed theo D-023 |
 | **Bảo mật sinh trắc học** | WebAuthn / Passkeys (Tùy chọn) | FaceID / Fingerprint để xác thực giao dịch nhanh | Khóa thiết bị theo Device ID phần cứng |
 
 ---
@@ -45,14 +47,33 @@ Mục tiêu kỹ thuật của tài liệu này:
 
 Hệ thống triển khai 4 tầng bộ đệm kế tiếp nhau:
 
+<!-- BEGIN MERMAID DIAGRAM CONVERT-01_Cross_Platform_Caching_And_CDN -->
+### Multi-tier cache path
+
+```mermaid
+flowchart LR
+  client["Web / Mobile / Staff client"]
+  c1["1. Client cache<br/>immutable assets, ETag"]
+  c2["2. Edge CDN<br/>public static/semi-static content"]
+  c3["3. Gateway cache<br/>eligible public GET responses"]
+  c4["4. Redis Cluster<br/>short-lived application data and locks"]
+  db[("SQL Server<br/>authoritative data")]
+  origin["Object Storage origin"]
+  write["Concert update / cacheable data write"]
+  purge["Purge / invalidate affected cache keys"]
+  client --> c1 --> c2 --> c3 --> c4 --> db
+  c2 -.->|static asset miss| origin
+  write --> db
+  write --> purge
+  purge -.-> c4
+  purge -.-> c3
+  purge -.-> c2
+  note["Sensitive or real-time endpoints such as seat hold, checkout, queue status, and /users/me bypass shared caches. Seat availability is not made authoritative by a cache."]
+  c3 -.-> note
 ```
-[Khách hàng (Client App / Browser)]
-   └── Tầng 1: Client Memory / Disk Cache (HTTP Cache Headers)
-           └── Tầng 2: Edge CDN Cache (Cloudflare / CloudFront)
-                   └── Tầng 3: API Gateway Response Cache (Kong / Envoy)
-                           └── Tầng 4: Distributed In-Memory Cache (Redis Cluster)
-                                   └── [Cơ sở dữ liệu gốc (MySQL 8.0 Primary/Replicas)]
-```
+<!-- END MERMAID DIAGRAM CONVERT-01_Cross_Platform_Caching_And_CDN -->
+
+
 
 ### Chi Tiết Cấu Hình Từng Tầng Bộ Đệm
 
@@ -62,6 +83,27 @@ Hệ thống triển khai 4 tầng bộ đệm kế tiếp nhau:
 | **Tầng 2: Edge CDN** | Cloudflare / AWS CloudFront | Trang chủ, Chi tiết concert công khai, Bản đồ rạp SVG | 60s đến 30 ngày | Cloudflare API Purge by Cache-Tag khi sự kiện thay đổi |
 | **Tầng 3: Gateway Cache** | Kong Proxy Cache Plugin | Kết quả tìm kiếm concert, Danh sách nghệ sĩ, Metadata | 10s đến 120s | LRU (Least Recently Used) tự động thu hồi khi tràn RAM |
 | **Tầng 4: Redis Cluster** | Redis In-Memory Cluster | Vị trí hàng chờ, Khóa ghế (`SETNX`), Token phiên, Rate limits | 3s đến 24 giờ | Chủ động xóa bằng lệnh `DEL` ngay khi có sự kiện ghi |
+
+<!-- BEGIN MERMAID DIAGRAM NFR-CACHE -->
+### Luồng cache miss và vô hiệu hóa cache
+
+```mermaid
+flowchart LR
+  request["Eligible public read request"] --> client["Client cache"]
+  client -->|miss / revalidate| cdn["Edge CDN"]
+  cdn -->|miss| gateway["Gateway response cache"]
+  gateway -->|miss| redis["Redis cache"]
+  redis -->|miss| db[("SQL Server read source")]
+  organizer["Concert data update"] --> primary[("SQL Server Primary")]
+  primary --> invalidate["Invalidate affected cache keys / cache tags"]
+  invalidate -.-> redis
+  invalidate -.-> gateway
+  invalidate -.-> cdn
+  note["Sensitive and realtime APIs bypass shared caches according to the HTTP cache policy in section 4."]
+  gateway -.-> note
+```
+<!-- END MERMAID DIAGRAM NFR-CACHE -->
+
 
 ---
 
@@ -109,8 +151,8 @@ Sự cố phổ biến nhất trong hệ thống Caching là **Dữ liệu mâu 
 Hệ thống áp dụng các mô hình xử lý sau:
 
 ### 1. Mô Hình Cache-Aside (Lazy Loading) Kết Hợp Write-Through
-- Khi có yêu cầu đọc: Ứng dụng kiểm tra Redis trước. Nếu có (Cache Hit) $\rightarrow$ trả về ngay. Nếu không (Cache Miss) $\rightarrow$ đọc từ MySQL 8.0 Read Replica, ghi vào Redis với TTL xác định rồi trả về.
-- Khi có thao tác sửa đổi (Organizer cập nhật concert): Service cập nhật Database thành công $\rightarrow$ Phát sự kiện Kafka `concert.updated` $\rightarrow$ Worker xóa ngay lập tức key tương ứng trong Redis (`DEL cache:concert:{id}`).
+- Khi có yêu cầu đọc: Ứng dụng kiểm tra Redis trước. Nếu có (Cache Hit) $\rightarrow$ trả về ngay. Nếu không (Cache Miss) $\rightarrow$ đọc từ SQL Server readable secondary; dùng Primary trong cửa sổ read-your-write, ghi vào Redis với TTL xác định rồi trả về.
+- Khi có thao tác sửa đổi (Organizer cập nhật concert): Service cập nhật Database thành công $\rightarrow$ Phát sự kiện qua RabbitMQ theo D-025 `concert.updated` $\rightarrow$ Worker xóa ngay lập tức key tương ứng trong Redis (`DEL cache:concert:{id}`).
 
 ### 2. Vô Hiệu Hóa Mạng Biên Theo Thẻ (Surrogate-Key / Cache-Tag Purging)
 - Khi CDN cache thông tin một concert, máy chủ trả kèm tiêu đề:
@@ -123,6 +165,6 @@ Hệ thống áp dụng các mô hình xử lý sau:
 
 ### 3. Phòng Ngừa Hiện Tượng Sập Bộ Đệm Hàng Loạt (Cache Stampede / Thundering Herd)
 - Khi một concert cực nóng hết hạn cache trong Redis đúng lúc có 10.000 người cùng truy cập:
-  - Không để 10.000 request cùng đổ dồn xuống Database MySQL 8.0.
+  - Không để 10.000 request cùng đổ dồn xuống Database SQL Server.
   - **Áp dụng Mutex Lock trong Cache:** Chỉ request đầu tiên phát hiện Cache Miss được phép lấy khóa tạm (Mutex Lock trong Redis 2 giây) để truy vấn Database và cập nhật lại cache. 9.999 request còn lại tạm dừng chờ 50ms hoặc sử dụng giá trị cũ tạm thời (Stale Data Serving).
 

@@ -1,4 +1,4 @@
-﻿# 01 — Ước Tính Lưu Lượng & Thông Lượng (Traffic & Throughput Estimation: QPS & CCU)
+# 01 — Ước Tính Lưu Lượng & Thông Lượng (Traffic & Throughput Estimation: QPS & CCU)
 
 ## 1. Giới Thiệu & Bối Cảnh Tải Hệ Thống (System Load Context)
 
@@ -47,10 +47,10 @@ Trong thời điểm mở bán cao điểm ($100.000\text{ CCU}$), lưu lượng
 |---|---|---|---|---|---|---|
 | `/api/v1/queue/status` | GET | Khách hàng trong phòng chờ polling lấy vị trí thứ tự | $\frac{95.000\text{ user chờ}}{3\text{ giây}}$ | **31.667 QPS** | **38.000 QPS** | Redis Sorted Set + Edge Caching / Short-polling token |
 | `/api/v1/concerts/{id}/seat-map` | GET | Tải cấu trúc sơ đồ ghế & trạng thái ghế | $\frac{5.000\text{ user chọn}}{5\text{ giây}}$ | **1.000 QPS** | **2.500 QPS** | CDN Caching (cấu trúc tĩnh SVG) + WebSocket/SSE (trạng thái động) |
-| `/api/v1/seats/hold` | POST | Giữ ghế (Distributed Lock) | $5.000\text{ user} \times 0.2\text{ click/s}$ | **1.000 TPS** | **3.000 TPS** | Redis Cluster (`SETNX` + Lua Script) + spring-async Queue |
+| `/api/v1/seats/hold` | POST | Giữ ghế (Distributed Lock) | $5.000\text{ user} \times 0.2\text{ click/s}$ | **1.000 TPS** | **3.000 TPS** | Redis Cluster (`SETNX` + Lua Script) + message broker queue |
 | `/api/v1/orders/checkout` | POST | Xác nhận đặt vé & tạo mã thanh toán | $\frac{50.000\text{ vé}}{4\text{ vé/đơn}} \div (15\text{ phút} \times 60)$ | **14 TPS** | **50 – 100 TPS** | RDBMS Master Write + Transaction Isolation |
 | `/api/v1/payments/ipn` | POST | Webhook nhận kết quả từ VNPay / MoMo | Khớp với tốc độ thanh toán của khách | **14 – 25 TPS** | **60 TPS** | Idempotency Key Filter + Async Event-Driven Worker |
-| `/api/v1/tickets/check-in` | POST | Quét QR tại cổng vào sân vận động | $\frac{50.000\text{ lượt}}{7.200\text{ giây}}$ | **7 – 15 TPS** | **80 – 100 TPS** | Redis Check-in Key + Batch DB Flush + Offline Fallback |
+| `/api/v1/tickets/check-in` | POST | Quét QR tại cổng vào sân vận động | $\frac{50.000\text{ lượt}}{7.200\text{ giây}}$ | **7 – 15 TPS** | **80 – 100 TPS** | Online validation; atomic DB transition; Redis chỉ là tối ưu, không xác thực offline |
 | `/api/v1/concerts/search` | GET | Tìm kiếm và xem thông tin concert | Lưu lượng khách vãng lai | **200 QPS** | **500 QPS** | Elasticsearch Cluster + Redis Cache Layer |
 
 ---
@@ -95,11 +95,31 @@ Trong khu vực chọn ghế ($5.000\text{ CCU}$ hoạt động đồng thời):
   - Trung bình mỗi cổng xử lý: $\frac{16.6}{40} \approx 0.41\text{ scans/second/cổng}$ (Tương đương 1 khách qua cổng sau mỗi $2.4\text{ giây}$).
 - **Yêu cầu độ trễ (Latency Target):** Thời gian phản hồi xác thực tại máy quét phải $\le 500\text{ ms}$ (P99 $\le 800\text{ ms}$) để đảm bảo dòng người không bị tắc nghẽn vật lý tại cửa khẩu an ninh.
 
+<!-- BEGIN MERMAID DIAGRAM CAP-TRAFFIC -->
+### Lưu lượng từ flash sale đến check-in
+
+```mermaid
+flowchart LR
+  ordinary["Ngày thường<br/>read/write khoảng 95:5"] --> catalog["Browse / search / tra cứu"]
+  sale["Flash sale benchmark<br/>100,000 CCU"] --> edge["CDN / API Gateway"]
+  edge --> queue["Virtual queue<br/>tối đa 95,000 người chờ trong kịch bản"]
+  queue --> admission["Admission control<br/>tối đa 5,000 CCU chọn ghế"]
+  admission --> booking["Seat map, giữ ghế, checkout"]
+  booking --> redis["Redis<br/>queue + lock TTL 600s"]
+  booking --> sql[("SQL Server Primary")]
+  booking --> gateway["VNPay / MoMo"]
+  attendees["50,000 khán giả<br/>40 cổng theo giả định"] --> scanners["Staff scanners"] --> checkin["Check-in API"] --> sql
+  note["Các con số là benchmark giả định trong tài liệu; cần xác nhận bằng tải thử nghiệm thực tế."]
+  queue -.-> note
+```
+<!-- END MERMAID DIAGRAM CAP-TRAFFIC -->
+
+
 ---
 
 ## 8. Chiến Lược Giới Hạn Tải & Bảo Vệ Hệ Thống (Rate Limiting & Shedding)
 
-Để đảm bảo tính khả dụng $99.99\%$ của hệ thống, các ngưỡng giới hạn (Rate Limits) được cấu hình tại API Gateway:
+Để hỗ trợ SLO 99.95% mỗi tháng cho critical first-party purchase APIs theo D-027, các ngưỡng giới hạn (Rate Limits) được cấu hình tại API Gateway:
 
 | Đối tượng áp dụng | Ngưỡng giới hạn (Rate Limit) | Thuật toán áp dụng | Hành vi khi vượt ngưỡng |
 |---|---|---|---|

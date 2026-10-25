@@ -1,4 +1,4 @@
-﻿# UC05 — Xem Sơ Đồ Ghế (View Seat Map)
+# UC05 — Xem Sơ Đồ Ghế (View Seat Map)
 
 ## 1. Thông Tin Chung
 
@@ -20,11 +20,31 @@ Use case này cho phép khách hàng đã đến lượt trong hàng chờ xem s
 
 ---
 
+<!-- BEGIN MERMAID USE-CASE UC05 -->
+### Sơ đồ Use Case (Mermaid)
+
+```mermaid
+flowchart LR
+  customer["👤 Khách hàng có Queue Access Token hợp lệ"]
+  subgraph SYS["Concert Ticketing System — UC05"]
+    direction TB
+    map(["Xem sơ đồ ghế của concert đang mở bán"])
+    status(["Xem trạng thái ghế và thông tin khu vực"])
+    realtime(["Nhận cập nhật trạng thái ghế real-time"])
+  end
+  customer --- map
+  map -.->|«bao gồm»| status
+  map -.->|«bao gồm»| realtime
+  classDef actor fill:#fff,stroke:#334155,stroke-width:1px
+  class customer actor
+```
+<!-- END MERMAID USE-CASE UC05 -->
+
 ## 3. Điều Kiện Tiên Quyết (Preconditions)
 
 - Customer đã đăng nhập và có JWT hợp lệ.
 - Customer đã nhận `Queue Access Token` (X-Queue-Token) — chứng nhận đã đến lượt vào khu chọn ghế.
-- `X-Queue-Token` còn trong thời hạn hiệu lực (TTL 120 giây, tự gia hạn khi user có tương tác).
+- `X-Queue-Token` còn trong thời hạn hiệu lực (TTL 120 giây từ heartbeat/UI action xác thực cuối; heartbeat mỗi 30 giây khi trang foreground; WebSocket đơn thuần không gia hạn theo D-015).
 - Số lượng người trong khu chọn ghế hiện tại < 5.000.
 - `concert.status = ON_SALE`.
 
@@ -79,7 +99,7 @@ Use case này cho phép khách hàng đã đến lượt trong hàng chờ xem s
 | EX-02 | Tất cả ghế đã SOLD (hết vé) khi customer vừa vào trang | Hiển thị "Rất tiếc! Vé đã bán hết trong lúc bạn chờ." |
 | EX-03 | WebSocket bị ngắt kết nối (mất mạng) | Hiển thị banner cảnh báo "Đang mất kết nối – Sơ đồ có thể không còn chính xác"; retry tự động mỗi 5 giây |
 | EX-04 | API trả snapshot sơ đồ ghế quá thời gian 3 giây | Hiển thị skeleton loading; retry 1 lần; nếu vẫn lỗi hiển thị nút "Thử lại" |
-| EX-05 | Customer không tương tác trong 120 giây liên tục | Hệ thống hiển thị cảnh báo "Bạn sắp mất lượt" ở giây 90; đến giây 120 → thu hồi Queue Token, giải phóng ghế đang giữ (nếu có) |
+| EX-05 | Customer không tương tác trong 120 giây liên tục | Hệ thống hiển thị cảnh báo "Bạn sắp mất lượt" ở giây 90; đến giây 120 → thu hồi Queue Token và quyền tiếp tục chọn ghế. Seat hold đã tạo vẫn theo TTL 10 phút đã chốt tại D-002; chỉ được giải phóng khi hết TTL, người dùng hủy, hoặc luồng đơn hàng hợp lệ kết thúc hold |
 
 ---
 

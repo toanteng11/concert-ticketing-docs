@@ -1,4 +1,4 @@
-﻿# 05 — Tối Ưu Hóa Cơ Sở Dữ Liệu & An Toàn Bảo Mật Hệ Thống (DB Optimization & Security)
+# 05 — Tối Ưu Hóa Cơ Sở Dữ Liệu & An Toàn Bảo Mật Hệ Thống (DB Optimization & Security)
 
 ## 1. Giới Thiệu & Mục Tiêu
 
@@ -6,7 +6,7 @@ Một hệ thống bán vé concert quy mô lớn phải đáp ứng đồng th�
 1. **Tối ưu hóa hiệu năng cơ sở dữ liệu cực đại:** Đảm bảo thời gian phản hồi câu truy vấn < 10ms cho các bảng chứa hàng chục triệu bản ghi trong điều kiện tải ghi dồn dập.
 2. **An toàn bảo mật cấp độ doanh nghiệp (Enterprise Security):** Bảo vệ tuyệt đối thông tin thanh toán, chống tấn công đánh cắp vé, ngăn chặn tài khoản ảo (Bot Farming) và tuân thủ các tiêu chuẩn bảo mật dữ liệu.
 
-Tài liệu này đặc tả chi tiết kiến trúc tối ưu hóa cơ sở dữ liệu MySQL 8.0 và toàn bộ các lớp phòng thủ an ninh thông tin của hệ thống.
+Tài liệu này đặc tả chi tiết kiến trúc tối ưu hóa cơ sở dữ liệu SQL Server và toàn bộ các lớp phòng thủ an ninh thông tin của hệ thống.
 
 ---
 
@@ -16,7 +16,7 @@ Tài liệu này đặc tả chi tiết kiến trúc tối ưu hóa cơ sở d�
 
 ### 2.1. Sharding Là Gì & Khi Nào Cần Dùng?
 
-**Database Sharding (Horizontal Sharding)** là kỹ thuật chia nhỏ một bảng dữ liệu khổng lồ thành nhiều phân mảnh (Shard), mỗi Shard lưu trên một máy chủ MySQL riêng biệt, theo một khóa phân mảnh (Shard Key — ví dụ `user_id % 4`, `concert_id % 8`).
+**Database Sharding (Horizontal Sharding)** là kỹ thuật chia nhỏ một bảng dữ liệu khổng lồ thành nhiều phân mảnh (Shard), mỗi Shard lưu trên một máy chủ SQL Server riêng biệt, theo một khóa phân mảnh (Shard Key — ví dụ `user_id % 4`, `concert_id % 8`).
 
 **Sharding chỉ thực sự cần thiết khi:**
 - Bảng dữ liệu đã vượt quá **1 tỷ bản ghi** và Index B-tree không còn fit vào RAM.
@@ -34,10 +34,10 @@ Tài liệu này đặc tả chi tiết kiến trúc tối ưu hóa cơ sở d�
 | `tickets` | ~15 triệu vé điện tử | ~10 GB | ❌ Không |
 | `payment_transactions` | ~25 triệu giao dịch | ~20 GB | ❌ Không |
 | `checkin_logs` | ~15 triệu lượt soát vé | ~8 GB | ❌ Không |
-| `notification_logs` | ~100 triệu bản ghi | ~60 GB | ⚠️ Xét Partitioning |
-| `audit_logs` | ~200 triệu bản ghi | ~120 GB | ⚠️ Xét Partitioning |
+| `notifications` | ~100 triệu bản ghi | ~60 GB | ❌ Không partition baseline; dùng index, retention và archival theo D-028 |
+| `audit_logs` | ~200 triệu bản ghi | ~120 GB | ❌ Không partition baseline; dùng index, retention và archival theo D-028 |
 
-**Tổng ước tính storage sau 5 năm: ~240 GB** — Hoàn toàn nằm trong giới hạn một MySQL Primary Server với SSD NVMe 2 TB. MySQL 8.0 với InnoDB Buffer Pool 64 GB có thể phục vụ lượng này hiệu quả.
+**Tổng ước tính storage sau 5 năm: ~240 GB** — Hoàn toàn nằm trong giới hạn một SQL Server Primary Server với SSD NVMe 2 TB. SQL Server với buffer pool 64 GB có thể phục vụ lượng này hiệu quả.
 
 ### 2.3. Tại Sao KHÔNG Dùng Sharding? (5 Lý Do Kỹ Thuật)
 
@@ -56,14 +56,16 @@ Modular Monolith + Sharding = Worst of both worlds
 
 Các truy vấn nghiệp vụ quan trọng cần JOIN nhiều bảng:
 ```sql
--- Báo cáo doanh thu: JOIN orders × payment_transactions × concerts × ticket_zones
-SELECT c.name, tz.zone_name, COUNT(o.id), SUM(p.amount)
+-- Báo cáo số vé bán theo concert/zone; chỉ lấy vé còn hiệu lực
+SELECT c.title, tz.name, COUNT(DISTINCT oi.id) AS tickets_sold, SUM(oi.price) AS gross_ticket_amount
 FROM orders o
-JOIN payment_transactions p ON o.id = p.order_id
-JOIN concerts c ON o.concert_id = c.id
-JOIN ticket_zones tz ON o.zone_id = tz.id
-WHERE p.status = 'PAID'
-GROUP BY c.id, tz.id;
+JOIN order_items oi ON oi.order_id = o.id
+JOIN tickets t ON t.order_item_id = oi.id
+JOIN seats s ON s.id = oi.seat_id
+JOIN ticket_zones tz ON tz.id = s.zone_id
+JOIN concerts c ON c.id = o.concert_id
+WHERE o.status = 'PAID' AND t.status = 'ORDERED'
+GROUP BY c.id, c.title, tz.id, tz.name;
 ```
 Nếu các bảng nằm trên các Shard khác nhau → **Cross-Shard JOIN không thể thực thi** → phải pull toàn bộ data về application layer để JOIN → cực kỳ chậm và tốn RAM.
 
@@ -71,7 +73,7 @@ Nếu các bảng nằm trên các Shard khác nhau → **Cross-Shard JOIN khôn
 
 | Tác vụ vận hành | Không Sharding | Có Sharding (4 shards) |
 |---|---|---|
-| Backup database | `mysqldump ticketdb` | Backup 4 DB riêng + merge script |
+| Backup database | `BACKUP DATABASE [ticketdb] ...` | Backup 4 DB riêng + merge script |
 | Restore khi sự cố | Restore 1 file | Restore 4 files, re-balance |
 | Schema migration (ALTER TABLE) | 1 lệnh | 4 lệnh tuần tự, lock phức tạp |
 | Monitor slow queries | 1 slow log | 4 slow logs phải tổng hợp |
@@ -89,9 +91,9 @@ Không có Shard Key nào phân phối đều cho bài toán flash-sale event.
 
 Với thiết kế đúng:
 - **Redis** xử lý 99% read traffic (concert info, seat status, queue).
-- **MySQL Primary** chỉ nhận write traffic thuần túy (hold, order, payment).
-- Ước tính write QPS thực tế vào MySQL: ~500–2.000 writes/giây (đặt ghế + đơn hàng).
-- Một MySQL 8.0 server với NVMe SSD có thể xử lý **50.000–100.000 simple writes/giây**.
+- **SQL Server Primary** chỉ nhận write traffic thuần túy (hold, order, payment).
+- Ước tính write QPS thực tế vào SQL Server: ~500–2.000 writes/giây (đặt ghế + đơn hàng).
+- Thông lượng ghi phụ thuộc schema, chỉ mục, giao dịch và phần cứng; mọi capacity cần benchmark theo D-030, không dùng con số ước tính làm cam kết.
 
 ### 2.4. Chiến Lược Thay Thế Sharding — Được Áp Dụng
 
@@ -99,114 +101,93 @@ Thay vì Sharding ngang (Horizontal Sharding), hệ thống áp dụng **3 chi�
 
 | Chiến lược | Áp dụng cho | Lợi ích |
 |---|---|---|
-| **1. Table Partitioning** | `audit_logs`, `checkin_logs`, `notification_logs` | Partition Pruning giảm 95% I/O; DROP PARTITION thay TRUNCATE |
-| **2. Read Replica (Read/Write Splitting)** | Toàn bộ SELECT queries | Đọc từ 2 Replica, ghi vào Primary → tăng read throughput 3× |
-| **3. Redis Cache Layer** | Concert info, seat map, user session | 99% read traffic không chạm MySQL |
+| **1. Partitioning** | Không có physical partition trong baseline | Index, retention và archival; chỉ xét RANGE append-only nếu benchmark chứng minh cần (D-028) |
+| **2. Read Replica (Read/Write Splitting)** | SELECT đủ điều kiện consistency | Route đọc đủ điều kiện sang readable synchronous secondary trong Always On AG theo D-026; read-your-write về Primary 5 giây (D-013) |
+| **3. Redis Cache Layer** | Concert info, seat map, user session | 99% read traffic không chạm SQL Server |
 
 ---
 
-## 3. Chiến Lược Tối Ưu Hóa Cơ Sở Dữ Liệu (MySQL 8.0 Optimization)
+## 3. Chiến Lược Tối Ưu Hóa Cơ Sở Dữ Liệu (SQL Server Optimization)
 
 ### 3.1. Thiết Kế Chỉ Mục Thông Minh (Targeted & Partial Indexing)
 
 Tránh tạo chỉ mục tràn lan gây chậm thao tác ghi (`INSERT`/`UPDATE`), hệ thống tập trung vào các chỉ mục có tính chọn lọc cao:
 
 ```sql
--- 1. Composite Index tìm ghế trống theo concert (sử dụng functional index MySQL 8.0)
+-- 1. Composite Index tìm ghế trống theo concert (sử dụng composite index)
 CREATE INDEX idx_seats_concert_status ON seats (concert_id, status, zone_id);
 
 -- 2. Composite Index tối ưu hóa truy vấn lịch sử đơn hàng của người dùng
 CREATE INDEX idx_orders_user_created ON orders (user_id, created_at DESC, status);
 
 -- 3. Unique Index chống tạo đơn trùng lặp cho cùng một lượt giữ ghế
-CREATE UNIQUE INDEX uq_order_hold_token ON orders (hold_token);
+CREATE UNIQUE INDEX uq_order_hold_token ON orders (hold_token);\nCREATE UNIQUE INDEX uq_orders_idempotency_key ON orders (idempotency_key);
 
 -- 4. B-tree Index phục vụ quét vé siêu tốc tại cổng (covering index)
 CREATE INDEX idx_tickets_qr ON tickets (qr_code_hash, status, concert_id);
 
 -- 5. Index cho payment IPN webhook lookup
-CREATE UNIQUE INDEX uq_payment_txn_ref ON payment_transactions (vnpay_txn_ref);
+CREATE UNIQUE INDEX uq_payment_provider_ref ON payment_transactions (provider, provider_transaction_id) WHERE provider_transaction_id IS NOT NULL;
 ```
 
-### 3.2. Phân Vùng Dữ Liệu Bảng Lớn (Table Partitioning — Thay Thế Sharding)
+### 3.2. Chính sách lưu trữ lịch sử
 
-Đối với các bảng có khối lượng bản ghi tăng trưởng nhanh, áp dụng **Range Partitioning theo tháng**:
-
-```sql
--- Bảng audit_logs: Phân vùng theo tháng (Range Partitioning)
-CREATE TABLE audit_logs (
-    id          BIGINT AUTO_INCREMENT,
-    user_id     BIGINT NOT NULL,
-    action      VARCHAR(100) NOT NULL,
-    entity_type VARCHAR(50),
-    entity_id   BIGINT,
-    ip_address  VARCHAR(45),
-    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (id, created_at)  -- Partition key phải trong PK
-) 
-PARTITION BY RANGE (YEAR(created_at) * 100 + MONTH(created_at)) (
-    PARTITION p2026_10 VALUES LESS THAN (202611),
-    PARTITION p2026_11 VALUES LESS THAN (202612),
-    PARTITION p2026_12 VALUES LESS THAN (202701),
-    PARTITION p_future VALUES LESS THAN MAXVALUE
-);
-
--- Xóa dữ liệu cũ hơn 5 năm tức thì — không lock bảng, không tốn I/O
-ALTER TABLE audit_logs DROP PARTITION p2021_10;
-
--- Tương tự cho checkin_logs, notification_logs
-```
-
-**Lợi ích của Partitioning (so với Sharding):**
-- Vẫn trong **một MySQL instance** → ACID transactions hoạt động bình thường.
-- Query Planner tự động thực hiện **Partition Pruning** — chỉ quét partition liên quan.
-- Xóa data cũ bằng `DROP PARTITION` → tức thì, không block, không gây I/O spike.
-
+Không sử dụng physical table partitioning trong baseline theo D-028. Tối ưu bằng index, retention policy, archival và batch deletion phù hợp. Chỉ đánh giá partition RANGE theo created_at cho bảng lịch sử append-only nếu benchmark thực tế chứng minh cần; mọi đề xuất phải kiểm tra unique index/FK, retention, restore và cost trước khi được duyệt. Không dùng HASH(user) hoặc partition bảng giao dịch trong release hiện tại.
 ### 3.3. Phân Tách Đọc / Ghi (Read/Write Splitting)
 
 ```
-Writes (INSERT/UPDATE/DELETE)  →  MySQL Primary (1 server)
-                                      ↓ (Binlog Replication)
-Reads (SELECT - Report, Search) →  MySQL Read Replica 1
-                                  →  MySQL Read Replica 2
+Writes (INSERT/UPDATE/DELETE) → SQL Server Primary
+Reads đủ điều kiện             → readable secondary qua Always On AG/listener theo D-026
+Sau thao tác ghi (tối đa 5s)   → SQL Server Primary (D-013)
 ```
 
-Cấu hình trong Spring Boot với `@Transactional(readOnly = true)`:
+Readable synchronous secondary và routing dùng SQL Server 2025 Enterprise Always On AG theo D-026. Cần hai Hikari pools riêng cùng routing layer ở ứng dụng; @Transactional(readOnly = true) không tự động chọn secondary. Mọi read-your-write trong 5 giây sau thao tác ghi phải đi Primary; cache TTL 5 giây không thay thế bảo đảm đó.
 
 ```java
-// Spring Boot tự động route readOnly=true transactions → Replica
-@Transactional(readOnly = true)
-public Page<ConcertDto> searchConcerts(ConcertSearchRequest req, Pageable pageable) {
-    return concertRepository.findByFilters(req, pageable); // → Read Replica
+// Pseudocode: routing layer picks write pool, eligible read pool, or Primary sticky window
+if (requestContext.hasWriteWithinSeconds(5)) {
+    return primaryDataSource;
 }
-
-@Transactional  // Default read-write → Primary
-public OrderDto createOrder(CreateOrderRequest req) {
-    // INSERT orders, INSERT order_items → Primary
-}
+return isReadOnly && readableSecondaryAvailable
+    ? readDataSource
+    : primaryDataSource;
 ```
 
 ### 3.4. Quản Lý Kết Nối Bằng HikariCP (Connection Pooling)
 
 ```yaml
-# application.yml — HikariCP configuration
-spring:
+# Illustrative pool settings; aggregate size is benchmarked (D-030)
+app:
   datasource:
-    hikari:
-      maximum-pool-size: 50       # Tối đa 50 kết nối vật lý tới MySQL
-      minimum-idle: 10            # Luôn giữ sẵn 10 kết nối
-      connection-timeout: 3000    # 3 giây timeout nếu không lấy được connection
-      idle-timeout: 600000        # Đóng connection nhàn rỗi sau 10 phút
-      max-lifetime: 1800000       # Tái tạo connection sau 30 phút (tránh stale)
-      leak-detection-threshold: 5000  # Cảnh báo nếu connection bị giữ > 5 giây
+    write:
+      hikari:
+        maximum-pool-size: 50
+        connection-timeout: 3000
+    read:
+      hikari:
+        maximum-pool-size: 50
+        connection-timeout: 3000
 ```
 
-**Tại sao 50 connections đủ cho 100K CCU?**
-- 100K CCU không có nghĩa 100K requests đồng thời chạm MySQL.
-- Nhờ Redis cache, chỉ ~2–5% requests thực sự cần MySQL write.
-- Mỗi DB transaction chỉ giữ connection ~5–50ms → 50 connections × (1000ms/50ms) = **1.000 transactions/giây**.
+Các giá trị pool trên chỉ để minh họa. Mỗi application instance có pool riêng; tổng kết nối tiềm năng bằng số instance nhân với giới hạn mỗi pool. Cần đặt ngân sách riêng cho pool ghi/đọc, worker và migration rồi xác nhận bằng benchmark SQL Server theo D-030. Không giả định một số kết nối cố định đủ cho 100K CCU.
 
----
+<!-- BEGIN MERMAID DIAGRAM NFR-DB-ROUTING -->
+### Luồng đọc/ghi và cache
+
+```mermaid
+flowchart LR
+  read["Eligible read request"] --> cache{"Redis cache hit?"}
+  cache -->|yes| response["Return cached result"]
+  cache -->|no| route{"Read-your-write window?"}
+  route -->|within 5s| primary[("SQL Server Primary")]
+  route -->|eligible read on D-026 secondary| secondary[("Readable secondary")]
+  write["Transactional write"] --> primary
+  primary -->|invalidate / refresh| cache
+  note["No physical table partition in current baseline. Use index, retention and archival; evaluate only after measured evidence under D-028."]
+  primary -.-> note
+```
+<!-- END MERMAID DIAGRAM NFR-DB-ROUTING -->
+
 
 ## 4. Kiến Trúc Xác Thực & Phân Quyền (Authentication & RBAC)
 
@@ -267,3 +248,27 @@ public OrderDto getOrder(Long orderId, Long authenticatedUserId) {
 - **Cloudflare WAF** tuyến đầu — lọc OWASP Top 10, chặn scanner tự động.
 - **API Gateway Rate Limit** — Redis INCR + EXPIRE: > 120 req/phút/IP → 429 Too Many Requests.
 - **Cloudflare Turnstile CAPTCHA** — kích hoạt khi phát hiện hành vi bot trước khi vào hàng chờ.
+
+<!-- BEGIN MERMAID DIAGRAM NFR-SECURITY-PATH -->
+### Đường đi xác thực và bảo vệ dữ liệu
+
+```mermaid
+flowchart LR
+  client["Client"] --> tls["HTTPS / TLS"] --> gateway["Gateway<br/>rate limit and request validation"]
+  gateway --> route{"Public or protected endpoint?"}
+  route -->|public| service["Application service"]
+  route -->|protected| token["Validate JWT signature / expiry"]
+  token --> valid{"Token valid?"}
+  valid -->|no| deny401["Reject 401"]
+  valid -->|yes| role["Check RBAC role and resource ownership"]
+  role --> allowed{"Authorized?"}
+  allowed -->|no| deny403["Reject 403 and audit security event"]
+  allowed -->|yes| service
+  service --> query["Parameterized query and business validation"]
+  query --> db[("SQL Server")]
+  admin["Privileged / sensitive access"] --> audit["Append audit record"]
+  service -.-> audit
+  note["Access-token lifetime and dual-token rules remain those stated in section 4. Passwords, OTPs, raw tokens, and complete payment-card data are not logged or stored by the platform."]
+  query -.-> note
+```
+<!-- END MERMAID DIAGRAM NFR-SECURITY-PATH -->

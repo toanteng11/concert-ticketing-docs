@@ -77,7 +77,7 @@ sequenceDiagram
     alt Redis lock thành công
         REDIS-->>API: OK
 
-        API->>DB: UPDATE seats\nSET status='HELD', hold_user_id='{user_id}',\n    hold_started_at=NOW(), version=version+1\nWHERE id='seat_A12'\n  AND status='AVAILABLE'\n  AND version = {current_version}
+        API->>DB: UPDATE seats\nSET status='HELD', hold_user_id='{user_id}',\n    hold_started_at=SYSUTCDATETIME(), version=version+1\nWHERE id='seat_A12'\n  AND status='AVAILABLE'\n  AND version = {current_version}
         Note over DB: Optimistic Lock:<br/>Bảo vệ tầng 2 chống race condition
 
         alt DB update thành công (1 row affected)

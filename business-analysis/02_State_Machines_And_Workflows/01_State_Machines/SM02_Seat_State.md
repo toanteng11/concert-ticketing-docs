@@ -4,7 +4,7 @@
 
 Tài liệu mô tả toàn bộ vòng đời trạng thái của một **Ghế ngồi (Seat)** trong sơ đồ khán phòng. State machine này là căn cứ để:
 - Thiết kế cột `status` trong bảng `seats` (Database Design — cần Index cho query tốc độ cao).
-- Thiết kế cơ chế **Distributed Lock** (Redis Redlock) chống double-booking.
+- Thiết kế cơ chế **atomic Redis lock theo owner token kết hợp conditional update trên SQL Server** chống double-booking.
 - Xác định các sự kiện domain (`SeatHeld`, `SeatReleased`, `SeatSold`) để broadcast WebSocket cập nhật sơ đồ ghế real-time.
 - Xác định các guard condition cho API `/seats/hold` và `/seats/release`.
 
@@ -49,12 +49,12 @@ stateDiagram-v2
 | # | Trạng thái hiện tại | Event / Trigger | Guard Condition | Trạng thái kế tiếp | Actor | BR liên quan |
 |---|---|---|---|---|---|---|
 | T-01 | `AVAILABLE` | Khách hàng gọi API chọn ghế `POST /seats/{id}/hold` | (1) `seat.status = AVAILABLE`; (2) User có `X-Queue-Token` hợp lệ còn hiệu lực; (3) Redis `SET NX EX 600` (atomic lock) thành công; (4) Số ghế đang hold của user < giới hạn concert (mặc định 4) | `HELD` | Customer | BR-SEAT-001, BR-SEAT-004, BR-QUEUE-008 |
-| T-02 | `HELD` | Redis TTL hết hạn sau 600 giây | `current_time - seat.hold_started_at >= 600s` (kiểm tra qua Redis keyspace notification hoặc Scheduler job mỗi 5s) | `AVAILABLE` | System (Auto-release) | BR-SEAT-002, BR-SEAT-003 |
+| T-02 | `HELD` | Đến hạn hold sau 600 giây | `SYSUTCDATETIME() >= seat.hold_expires_at`; scheduler/reconciler kiểm tra SQL Server. Redis keyspace notification chỉ là tín hiệu đánh thức, không phải nguồn đảm bảo | `AVAILABLE` | System (Auto-release) | BR-SEAT-002, BR-SEAT-003 |
 | T-03 | `HELD` | Khách hàng gọi API bỏ chọn ghế `DELETE /seats/{id}/hold` | `seat.hold_user_id = current_user_id` (chỉ người đang giữ mới được bỏ) | `AVAILABLE` | Customer | BR-SEAT-002 |
-| T-04 | `HELD` | Đơn hàng liên kết chuyển sang `OUT_TIME` | Scheduler phát hiện `order.expires_at < now()` → kích hoạt giải phóng ghế | `AVAILABLE` | System (Auto-release) | BR-SEAT-003, BR-ORD-002 |
+| T-04 | `HELD` | Đơn hàng liên kết chuyển sang `OUT_TIME` | Worker xử lý khi `SYSUTCDATETIME() >= order.expires_at` và order còn `PENDING` → giải phóng đúng hold group | `AVAILABLE` | System (Auto-release) | BR-SEAT-003, BR-ORD-002 |
 | T-05 | `HELD` | Đơn hàng liên kết bị `CANCELLED` bởi khách hàng | `order.status = CANCELLED` được cập nhật; Service phát `OrderCancelledEvent` | `AVAILABLE` | System (Event-driven) | BR-ORD-007 |
-| T-06 | `HELD` | IPN Webhook thanh toán thành công | `payment_transaction.status = SUCCESS`; Số tiền khớp với `order.total_amount` (BR-PAY-006); Chữ ký HMAC hợp lệ | `SOLD` | System (Webhook handler) | BR-PAY-002, BR-PAY-006 |
-| T-07 | `SOLD` | Yêu cầu hoàn tiền được chấp thuận | `order.status = REFUNDED`; `concert.status = ON_SALE` (còn đang bán) → ghế mở lại cho người khác | `AVAILABLE` | System (Refund Service) | BR-RFD-003 |
+| T-06 | `HELD` | IPN Webhook thanh toán thành công | `payment_transaction.status = SUCCESS`; số tiền khớp `order.final_amount` (BR-PAY-006); chữ ký hợp lệ; order và mọi seat hold vẫn còn hiệu lực tại thời điểm commit | `SOLD` | System (Webhook handler) | BR-PAY-002, BR-PAY-006 |
+| T-07 | `SOLD` | Yêu cầu hoàn tiền được chấp thuận | Yêu cầu hủy đã được chấp nhận cục bộ, `order.status = REFUND_PENDING`; vé bị vô hiệu hóa; `concert.status = ON_SALE` → ghế được mở lại. Refund thất bại không tự phục hồi vé/ghế | `AVAILABLE` | System (Refund Service) | BR-RFD-003 |
 | T-08 | `AVAILABLE` | Organizer/Admin khóa ghế kỹ thuật | `concert.status NOT IN ['ON_SALE']` HOẶC Admin override; `seat.status = AVAILABLE` | `BLOCKED` | Organizer / Admin | BR-SEAT-006 |
 | T-09 | `BLOCKED` | Organizer/Admin mở khóa ghế | `concert.status NOT IN ['ON_SALE','SOLD_OUT']` HOẶC Admin; ghế không bị link với đơn hàng nào | `AVAILABLE` | Organizer / Admin | BR-SEAT-006 |
 
@@ -111,7 +111,8 @@ Hệ thống áp dụng **2 lớp bảo vệ** để đảm bảo Zero Double-Bo
    UPDATE seats
    SET status = 'HELD',
        hold_user_id = :user_id,
-       hold_started_at = NOW(),
+       hold_started_at = SYSUTCDATETIME(),
+       hold_expires_at = DATEADD(SECOND, 600, SYSUTCDATETIME()),
        version = version + 1
    WHERE id = :seat_id
      AND status = 'AVAILABLE'
@@ -127,9 +128,9 @@ Hệ thống áp dụng **2 lớp bảo vệ** để đảm bảo Zero Double-Bo
 flowchart LR
     A["Khách hàng giữ ghế\n seat.status = HELD\n Redis key TTL = 600s"] --> B{{"Sau 600 giây?"}}
     B -->|Ghế chưa được thanh toán| C["Redis Keyspace Notification:\n__keyevent@0__:expired"]
-    C --> D["Seat Release Worker\n(Subscribe Redis expired event)"]
+    C --> D["Seat Release Worker / Reconciler\n(SQL expiry scan is authoritative; Redis event is best-effort wake-up)"]
     D --> E["UPDATE seats SET status='AVAILABLE'\nWHERE id = seat_id AND status = 'HELD'\nAND hold_user_id = expired_user_id"]
-    D --> F["UPDATE orders SET status='OUT_TIME'\nWHERE seat_id = seat_id AND status = 'PENDING'"]
+    D --> F["UPDATE orders SET status='OUT_TIME'\nWHERE expires_at <= SYSUTCDATETIME() AND status = 'PENDING'"]
     D --> G["Publish SeatReleasedEvent\n→ WebSocket broadcast\n→ Cập nhật sơ đồ ghế real-time"]
     B -->|Thanh toán thành công trước 600s| H["seat.status = SOLD\n(Redis key xóa chủ động)"]
 ```
@@ -154,9 +155,9 @@ Mỗi khi ghế thay đổi trạng thái, hệ thống phát sự kiện WebSoc
 | Invariant | Mô tả |
 |---|---|
 | **INV-SEAT-01** | Một ghế chỉ được ở đúng một trạng thái tại một thời điểm. |
-| **INV-SEAT-02** | Tổng số ghế theo concert là hằng số bất biến: `COUNT(AVAILABLE) + COUNT(HELD) + COUNT(SOLD) + COUNT(BLOCKED) = venue.capacity` (BR-SEAT-008). |
+| **INV-SEAT-02** | Tổng số ghế theo concert là hằng số bất biến: `COUNT(AVAILABLE) + COUNT(HELD) + COUNT(SOLD) + COUNT(BLOCKED) = số ghế đã cấu hình cho concert` (BR-SEAT-008). |
 | **INV-SEAT-03** | Ghế ở trạng thái `HELD` luôn phải có đúng một `hold_user_id` và một `hold_started_at` hợp lệ. |
 | **INV-SEAT-04** | Ghế ở trạng thái `SOLD` luôn phải liên kết với đúng một `ticket_id` hợp lệ. |
 | **INV-SEAT-05** | Không thể chuyển thẳng từ `AVAILABLE` sang `SOLD` mà không qua trạng thái `HELD` (đảm bảo luồng tạo đơn hàng). |
-| **INV-SEAT-06** | Chuyển trạng thái `HELD → AVAILABLE` (giải phóng) chỉ được thực hiện bởi chính `hold_user_id` đang giữ hoặc bởi System (auto-release). Không một người dùng nào khác được giải phóng ghế của người khác. |
+| **INV-SEAT-06** | Chuyển `HELD → AVAILABLE` chỉ do chủ hold, worker hệ thống sau khi đối chiếu owner/expiry, hoặc Admin có quyền override và audit log; thao tác release cũ không được xóa lock của owner mới. |
 

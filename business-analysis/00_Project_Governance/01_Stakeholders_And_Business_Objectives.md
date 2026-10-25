@@ -1,4 +1,4 @@
-﻿# Stakeholders và Mục Tiêu Kinh Doanh
+# Stakeholders và Mục Tiêu Kinh Doanh
 
 ## Mục đích
 
@@ -79,7 +79,7 @@ Tài liệu này xác định tất cả các bên liên quan (stakeholders) c�
   - Giám sát toàn bộ hệ thống qua dashboard (load, latency, error rate, queue depth).
   - Thiết lập alerting khi lưu lượng tăng đột biến (đặc biệt thời điểm mở bán vé với ~100.000 CCU).
   - Đảm bảo SLA, xử lý incident và scale hệ thống kịp thời.
-  - Giám sát Redis, Kafka, DB replicas và trạng thái các dịch vụ phụ trợ.
+  - Giám sát Redis, message broker, SQL Server Primary/readable secondary và trạng thái các dịch vụ phụ trợ.
 
 ---
 
@@ -93,7 +93,7 @@ Tài liệu này xác định tất cả các bên liên quan (stakeholders) c�
 | BO-04 | Đảm bảo thanh toán, hoàn tiền và phát hành vé an toàn, có thể truy vết và idempotent | Rất cao | Số lần trừ tiền trùng lặp = 0; 100% giao dịch hoàn tiền có bản ghi audit đầy đủ |
 | BO-05 | Trao cho ban tổ chức và quản trị viên công cụ quản lý vòng đời concert đầy đủ | Cao | 100% yêu cầu duyệt concert được xử lý trong vòng 48 giờ |
 | BO-06 | Cho phép xác thực vé QR một lần, nhanh chóng tại cổng vào | Cao | Thời gian phản hồi quét QR ≤ 500 ms; tỷ lệ check-in trùng lặp = 0 |
-| BO-07 | Gửi thông báo kịp thời và cung cấp báo cáo kinh doanh cho đúng bên liên quan | Trung bình | Tỷ lệ gửi thông báo thành công ≥ 99% trong vòng 30 giây sau sự kiện kích hoạt |
+| BO-07 | Ghi nhận và xử lý thông báo kịp thời, cung cấp báo cáo kinh doanh đúng bên liên quan | Trung bình | Sự kiện đủ điều kiện được lưu outbox và enqueue trong mục tiêu ≤5 giây; theo dõi trạng thái provider riêng, không cam kết SLA giao email/push bên thứ ba |
 
 ---
 

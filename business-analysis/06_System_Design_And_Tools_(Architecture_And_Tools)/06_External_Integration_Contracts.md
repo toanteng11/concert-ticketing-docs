@@ -10,6 +10,36 @@
 
 Tài liệu này đặc tả các hợp đồng giao tiếp kỹ thuật (**Integration Contracts**), thuật toán tạo chữ ký bảo mật, cấu trúc dữ liệu trao đổi và bảng ánh xạ mã lỗi đối tác sang chuẩn mã lỗi nội bộ của hệ thống.
 
+<!-- BEGIN MERMAID DIAGRAM DESIGN-INTEGRATIONS -->
+### Biên tích hợp vào/ra với nhà cung cấp
+
+```mermaid
+flowchart LR
+  subgraph PLATFORM["Concert Ticketing Platform"]
+    payment["Payment / Refund module"]
+    notify["Notification worker"]
+    auth["Auth / OTP service"]
+    feedback["Provider feedback handler"]
+  end
+  vnpay["VNPay"]
+  momo["MoMo"]
+  ses["AWS SES / SendGrid"]
+  sns["AWS SNS feedback"]
+  push["FCM / APNs"]
+  sms["SMS Brandname provider"]
+  payment <-->|create payment, refund, signed IPN| vnpay
+  payment <-->|create payment, refund, signed IPN| momo
+  notify -->|transactional email| ses
+  ses -->|bounce / complaint events| sns --> feedback
+  notify -->|device push| push
+  auth -->|OTP| sms
+  notify -->|emergency cancellation notice only| sms
+  note["Provider credentials are configuration secrets. The broker choice and delivery/retry policy follow the open decisions referenced by the source documents."]
+  feedback -.-> note
+```
+<!-- END MERMAID DIAGRAM DESIGN-INTEGRATIONS -->
+
+
 ---
 
 ## 2. Hợp Đồng Tích Hợp Cổng Thanh Toán VNPay (VNPay Integration Contract)

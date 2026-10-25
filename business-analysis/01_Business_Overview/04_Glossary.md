@@ -1,4 +1,4 @@
-﻿# Từ Điển Thuật Ngữ (Glossary)
+# Từ Điển Thuật Ngữ (Glossary)
 
 ## Mục đích
 
@@ -35,10 +35,11 @@ Tài liệu này định nghĩa thống nhất tất cả thuật ngữ, trạng
 |---|---|---|
 | `PENDING` | Chờ thanh toán | Đơn đã được tạo trong khi seat hold còn hiệu lực; chờ khách thanh toán |
 | `PAID` | Đã thanh toán | Thanh toán thành công; vé đã được phát hành (ticket.status = ORDERED) |
-| `REFUND_PENDING` | Yêu cầu hoàn tiền | Khách đã gửi yêu cầu hủy đơn PAID; đang xử lý hoàn tiền với payment provider |
-| `REFUNDED` | Đã hoàn tiền | Tiền đã hoàn về tài khoản khách theo đúng chính sách |
+| `REFUND_PENDING` | Đang xử lý hoàn tiền | Order đã chuyển vào luồng refund được chấp nhận; ticket vô hiệu hóa trong thời gian provider xử lý |
+| `REFUNDED` | Đã hoàn tiền | Refund provider xác nhận hoàn tất |
+| `REFUND_FAILED` | Hoàn tiền lỗi | Cần retry/đối soát/manual; không tự phục hồi order thành `PAID` |
 | `OUT_TIME` | Hết hạn | Đơn PENDING nhưng quá 10 phút không hoàn tất thanh toán; ghế tự động trả về AVAILABLE |
-| `CANCELLED` | Đã hủy | Đơn bị hủy trực tiếp (khách hủy đơn PENDING hoặc concert bị hủy) |
+| `CANCELLED` | Đã hủy | Khách hủy order còn `PENDING`; order paid khi concert hủy chuyển sang `REFUND_PENDING` theo chính sách |
 
 ### 1.4 Trạng thái Vé (`ticket.status`)
 
@@ -55,9 +56,19 @@ Tài liệu này định nghĩa thống nhất tất cả thuật ngữ, trạng
 | `INITIATED` | Khởi tạo | Yêu cầu thanh toán vừa được gửi đến payment provider |
 | `PROCESSING` | Đang xử lý | Payment provider đang xử lý giao dịch |
 | `SUCCESS` | Thành công | Giao dịch hoàn tất, tiền đã được trừ |
-| `FAILED` | Thất bại | Giao dịch thất bại (không đủ tiền, lỗi mạng, hết hạn phiên) |
-| `REFUND_PROCESSING` | Đang hoàn tiền | Yêu cầu hoàn tiền đã gửi đến provider, chờ xác nhận |
-| `REFUNDED` | Đã hoàn tiền | Tiền đã hoàn về tài khoản khách hàng |
+| `FAILED` | Thất bại xác định | Provider xác nhận không thu tiền |
+| `UNKNOWN` | Chưa rõ kết quả | Timeout/mất callback; cần reconcile trước khi retry |
+| `SUCCESS_UNFULFILLED` | Đã thu tiền nhưng chưa cấp vé | Hold đã hết hạn hoặc không thể claim đủ ghế; giữ trạng thái này và hoàn 100% số tiền đã capture sau khi provider xác nhận theo D-016/D-032 |
+
+### 1.6 Trạng thái Hoàn tiền (`refunds.status`)
+
+| Mã trạng thái | Tên tiếng Việt | Mô tả |
+|---|---|---|
+| `PENDING` | Chờ xử lý | Refund request đã được lưu và chờ gửi/xử lý |
+| `PROCESSING` | Đang xử lý | Provider đã nhận yêu cầu |
+| `COMPLETED` | Hoàn tất | Provider xác nhận hoàn tiền |
+| `FAILED` | Thất bại | Cần retry/đối soát/manual, không đồng nghĩa order quay lại `PAID` |
+| `REJECTED` | Bị từ chối | Không đủ điều kiện trước khi gửi provider |
 
 ---
 
@@ -71,8 +82,8 @@ Tài liệu này định nghĩa thống nhất tất cả thuật ngữ, trạng
 | **Queue Position** | Số thứ tự hàng chờ | Vị trí (số nguyên dương) của một tài khoản trong hàng đợi ảo. **Duy nhất per tài khoản per concert** — mở nhiều tab hay thiết bị vẫn chỉ có một số. |
 | **Seat Map** | Sơ đồ ghế | Bản đồ tương tác của địa điểm tổ chức, hiển thị từng ghế với màu sắc phản ánh trạng thái real-time: xanh=AVAILABLE, vàng=HELD, đỏ=SOLD, xám=BLOCKED. |
 | **Concert Lifecycle** | Vòng đời concert | Chuỗi chuyển trạng thái của concert từ PENDING_REVIEW đến COMPLETED hoặc CANCELLED. |
-| **Refund Policy** | Chính sách hoàn tiền | Quy tắc: ≥7 ngày trước concert → hoàn 100%; 3–6 ngày → hoàn 50%; <3 ngày → không hoàn. Áp dụng cho cả Khách hủy đơn lẫn Admin hủy concert (Admin hủy thì luôn 100%). |
-| **Late Payment** | Thanh toán trễ | Payment provider gửi callback SUCCESS sau khi seat hold đã hết hạn (>10 phút). Cần quy trình xử lý riêng: kiểm tra ghế còn available không, nếu không → hoàn tiền tự động. |
+| **Refund Policy** | Chính sách hoàn tiền | Khách tự hủy: tính theo ngày lịch địa phương, ≥7 ngày 100%, 3–6 ngày 50%, 0–2 ngày 0%, chỉ khi không vé nào CHECKED. Concert bị hủy trước COMPLETED: hoàn 100% order.final_amount cho mọi đơn PAID kể cả CHECKED. |
+| **Late Payment** | Thanh toán trễ | Provider xác nhận capture sau khi hold 600 giây hết hạn: không hồi sinh hold hoặc tạo order mới; ghi SUCCESS_UNFULFILLED và hoàn 100% capture sau khi xác minh tiền đã thu theo D-016/D-032. |
 | **Concert Approval** | Duyệt concert | Quy trình Admin xem xét và phê duyệt concert trong ≤48 giờ. Giờ mở bán phải cách ngày duyệt ≥1 ngày. |
 | **Cancellation Request** | Yêu cầu hủy | Khi Organizer muốn hủy concert đã PUBLISHED nhưng chưa ON_SALE, phải gửi yêu cầu hủy. Admin chấp thuận thì concert mới bị hủy. |
 | **QR Ticket** | Vé QR | Vé điện tử chứa mã QR duy nhất, một-đối-một với ghế. Mỗi mã QR chỉ có thể quét thành công **một lần duy nhất**. |
@@ -88,7 +99,7 @@ Tài liệu này định nghĩa thống nhất tất cả thuật ngữ, trạng
 | **Idempotency Key** | Khóa bất biến | UUID do client tạo, gửi kèm header mỗi request thanh toán. Server lưu kết quả theo key; cùng key gọi lại → trả kết quả cũ, không xử lý lại → không trừ tiền hai lần. |
 | **Race Condition** | Xung đột đồng thời | Hai người dùng cùng thao tác trên cùng tài nguyên (cùng ghế), dẫn đến kết quả không nhất quán nếu không có cơ chế bảo vệ. |
 | **Optimistic Lock** | Khóa lạc quan | Thêm cột `version` vào bảng DB. Khi update, kiểm tra version không đổi; nếu đổi → conflict → retry. Phù hợp tải ghi thấp. |
-| **Pessimistic Lock** | Khóa bi quan | `SELECT ... FOR UPDATE` — khóa dòng DB ngay khi đọc, ngăn transaction khác. Dùng cho seat hold khi Redis fail. |
+| **Pessimistic Lock** | Khóa bi quan | `SELECT ... WITH (UPDLOCK, ROWLOCK) inside a transaction` — khóa dòng DB ngay khi đọc, ngăn transaction khác. Dùng cho seat hold khi Redis fail. |
 | **Redis SET NX EX** | Lệnh Redis giữ ghế | `SET seat:{concertId}:{seatId} {userId} NX EX 600` — chỉ set nếu key chưa tồn tại (NX), tồn tại 600 giây (EX). Tạo distributed lock cho seat hold. |
 | **Dead Letter Queue** | Hàng đợi thư chết | Hàng đợi nhận message thất bại sau N retry. Dùng để giữ lại notification lỗi để debug và retry thủ công. |
 | **Webhook Callback** | Callback webhook | HTTP POST mà payment provider gửi đến endpoint `/payment/callback` của hệ thống khi giao dịch hoàn tất. Phải validate chữ ký và xử lý idempotent. |
@@ -98,7 +109,7 @@ Tài liệu này định nghĩa thống nhất tất cả thuật ngữ, trạng
 | **CAP Theorem** | Định lý CAP | Hệ thống phân tán chỉ đảm bảo được 2/3: Consistency, Availability, Partition Tolerance. Hệ thống này chọn **CP** — ưu tiên tính nhất quán dữ liệu. |
 | **Horizontal Scaling** | Scale ngang | Tăng số instance/server để xử lý tải; mỗi instance stateless để dễ scale. Ngược với vertical scaling (nâng cấp phần cứng). |
 | **Rate Limiting** | Giới hạn tốc độ | Giới hạn số request/IP hoặc /user trong khoảng thời gian. Áp dụng chặt tại `/login`, `/payment`, `/seat-hold`. |
-| **Message Queue** | Hàng đợi tin nhắn | Kafka hoặc RabbitMQ — dùng để tách luồng thanh toán khỏi luồng gửi thông báo. Đảm bảo at-least-once delivery với retry. |
+| **Message Queue** | Hàng đợi tin nhắn | RabbitMQ là broker baseline theo D-025 cho tác vụ và sự kiện bất đồng bộ; durable queue, publisher confirms, retry giới hạn, DLQ và consumer idempotent. |
 
 ---
 

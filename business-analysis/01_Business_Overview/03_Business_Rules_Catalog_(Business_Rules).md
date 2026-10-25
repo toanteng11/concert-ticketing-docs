@@ -1,4 +1,4 @@
-﻿# Danh Mục Quy Tắc Nghiệp Vụ (Business Rules Catalog)
+# Danh Mục Quy Tắc Nghiệp Vụ (Business Rules Catalog)
 
 ## 1. Giới Thiệu & Mục Đích
 
@@ -24,6 +24,7 @@ Tài liệu phục vụ làm căn cứ chuẩn xác để:
 | `BR-RFD` | Hủy đơn & Hoàn tiền (Refunds & Cancellations) | 7 quy tắc (`BR-RFD-001` → `007`) |
 | `BR-CON` | Quản lý Concert & Ban tổ chức (Organizer & Events) | 8 quy tắc (`BR-CON-001` → `008`) |
 | `BR-REV` | Đánh giá & Nhận xét (Reviews & Rating) | 4 quy tắc (`BR-REV-001` → `004`) |
+| `BR-NOTI` | Thông báo & tùy chọn nhận tin (Notifications) | 3 quy tắc (`BR-NOTI-001` → `003`) |
 
 ---
 
@@ -61,20 +62,17 @@ Tài liệu phục vụ làm căn cứ chuẩn xác để:
 - **Mô tả:** Khu vực chọn ghế (Seat Selection Area) chỉ cho phép tối đa 5.000 người dùng hoạt động đồng thời tại một thời điểm (`current_active_users <= 5,000`). Khi có người hoàn tất thanh toán, hủy bỏ, hoặc hết hạn phiên rời khỏi khu vực, hệ thống mới cấp quyền (Queue Admission Token) cho số thứ tự kế tiếp vào thay thế.
 - **Tác động thiết kế:** Token Bucket hoặc Leaky Bucket thuật toán; duy trì đếm số active token trên Redis với TTL.
 
-#### BR-QUEUE-006: Thu hồi vị trí khi mất kết nối hoặc không tương tác quá 2 phút (Inactivity Timeout)
-- **Tên quy tắc:** Hết hạn phiên không hoạt động quá 2 phút (2-Minute Inactivity Revocation).
-- **Mô tả:** Khi đã đến lượt vào khu chọn ghế, nếu khách hàng không có bất kỳ thao tác tương tác nào (click chuột, chọn ghế, di chuyển màn hình) hoặc mất kết nối (ngắt WebSocket/Heartbeat) liên tục quá 120 giây (2 phút), hệ thống sẽ tự động thu hồi quyền chọn ghế và hủy số thứ tự của tài khoản đó.
-- **Xử lý vi phạm:** Người dùng bị đưa ra khỏi khu chọn ghế. Nếu muốn mua tiếp, người dùng phải bấm xếp hàng lại từ đầu và nhận số thứ tự ở cuối hàng.
-- **Tác động thiết kế:** Client gửi heartbeat/ping định kỳ mỗi 15-30 giây; server dùng Redis TTL key 120s có sliding expiration khi có user activity.
+#### BR-QUEUE-006: Thu hồi phiên chọn ghế khi không hoạt động quá 2 phút (Inactivity Timeout)
+- **Tên quy tắc:** Thu hồi quyền vào khu chọn ghế sau 120 giây không hoạt động.
+- **Mô tả:** Hoạt động hợp lệ là thao tác UI hoặc heartbeat đã xác thực; ứng dụng ở foreground gửi heartbeat mỗi 30 giây. Kết nối WebSocket đơn thuần không được tính là hoạt động. Sau 120 giây từ hoạt động hợp lệ cuối, hệ thống thu hồi Queue Access Token và quyền chọn ghế, cảnh báo từ giây 90. Quy tắc này không hủy và không rút ngắn seat hold đã tạo: hold tiếp tục đến hết 600 giây, do người dùng hủy, hoặc luồng order hợp lệ kết thúc (D-002, D-015).
 
-#### BR-QUEUE-007: Đóng hàng chờ khi hết vé (Sold-out Queue Closure)
-- **Tên quy tắc:** Đóng hàng chờ và thông báo hết vé tức thì (Sold-out Notification).
-- **Mô tả:** Khi tổng số ghế ở trạng thái `AVAILABLE` và `HELD` bằng 0 (toàn bộ ghế đã chuyển thành `SOLD`), trạng thái concert lập tức đổi thành `SOLD_OUT`. Hàng chờ ảo lập tức đóng lại, ngắt nhận kết nối mới và gửi thông báo đẩy (Push/WebSocket broadcast) "Đã hết vé" đến toàn bộ người dùng còn đang chờ.
-- **Ngoại lệ:** Nếu có đơn hàng thanh toán thất bại (`OUT_TIME`) giải phóng ghế về `AVAILABLE`, concert có thể mở lại hàng chờ nếu cấu hình cho phép.
+#### BR-QUEUE-007: Đóng hàng chờ và thông báo khi hết vé
+- **Tên quy tắc:** Dừng cấp lượt mới khi concert hết vé và thông báo trạng thái nhất quán.
+- **Mô tả:** Khi không còn ghế bán được, concert chuyển SOLD_OUT, waiting room ngừng cấp Queue Access Token mới và phát cập nhật realtime trong ứng dụng cho người đang chờ. Push notification là kênh bổ sung khi người dùng đã cho phép; email/SMS không phải kênh bắt buộc. Message dùng event ID idempotent; trạng thái hộp thư IN_APP là nguồn hiển thị bền vững (D-020).
 
 #### BR-QUEUE-008: Mã hóa và chống giả mạo Queue Token (Queue Security)
 - **Tên quy tắc:** Token vào phòng chọn ghế phải được ký số và xác thực một lần.
-- **Mô tả:** Token cấp cho người dùng khi đến lượt vào khu chọn ghế (`Access Token`) phải được mã hóa dạng JWT/HMAC có kèm `user_id`, `concert_id`, `queue_number`, `issued_at`, `expires_at` và chữ ký bí mật của hệ thống. API chọn ghế bắt buộc kiểm tra tính hợp lệ của token này trước khi xử lý bất kỳ yêu cầu nào.
+- **Mô tả:** Token cấp cho người dùng khi đến lượt vào khu chọn ghế (`Access Token`) là JWT được ký bằng HMAC-SHA256, gồm `user_id`, `concert_id`, `queue_number`, `issued_at` và `expires_at`. API chọn ghế xác minh chữ ký, concert, thời hạn và quyền sử dụng token; payload JWT chỉ được ký, không được coi là dữ liệu đã mã hóa và khóa HMAC không được đưa xuống client.
 
 ---
 
@@ -136,10 +134,9 @@ Tài liệu phục vụ làm căn cứ chuẩn xác để:
 - **Tên quy tắc:** Order expiration đồng bộ với Seat hold timeout.
 - **Mô tả:** Thời hạn hiệu lực của đơn hàng `PENDING` được tính bằng thời gian còn lại của phiên giữ ghế (tối đa 10 phút kể từ lúc giữ ghế đầu tiên). Khi hết thời gian này, nếu đơn chưa thanh toán, trạng thái tự động chuyển thành `OUT_TIME`.
 
-#### BR-ORD-003: Giới hạn tổng số vé mua trên mỗi tài khoản cho 1 concert (Account Purchase Limit)
-- **Tên quy tắc:** Tổng số vé đã mua và đang giữ không vượt quá giới hạn concert.
-- **Mô tả:** Một tài khoản chỉ được sở hữu tổng cộng tối đa số vé quy định (mặc định 4 vé) cho một concert, tính bao gồm: số vé trong các đơn hàng đã thanh toán (`PAID`) cộng với số vé đang trong đơn chờ thanh toán (`PENDING`).
-- **Xử lý vi phạm:** Hệ thống từ chối tạo đơn nếu tổng số vé sở hữu vượt quá quy định; thông báo rõ: "Bạn đã sở hữu X vé, chỉ được mua thêm tối đa Y vé cho concert này".
+#### BR-ORD-003: Giới hạn tổng số vé hiệu lực trên mỗi tài khoản/concert (Account Purchase Limit)
+- **Tên quy tắc:** Một tài khoản có tối đa 4 vé hiệu lực hoặc đang được giữ cho một concert.
+- **Mô tả:** Giới hạn được kiểm tra nguyên tử theo cặp user_id + concert_id, gồm vé trong order PAID chưa bị hủy và ghế đang HELD/PENDING. Cho phép tạo nhiều order tuần tự, nhưng chỉ có một hold group/checkout hoặc payment attempt có kết quả UNKNOWN đang hoạt động tại một thời điểm cho cùng cặp user-concert. Order đã hủy/hoàn tiền hoàn tất không tính vào quota; giới hạn 4 vé/hold group vẫn áp dụng (D-001, D-018).
 
 #### BR-ORD-004: Tính bất biến của đơn hàng sau khi tạo (Order Immutability)
 - **Tên quy tắc:** Không cho phép sửa đổi thông tin ghế hoặc giá sau khi tạo đơn.
@@ -147,7 +144,7 @@ Tài liệu phục vụ làm căn cứ chuẩn xác để:
 
 #### BR-ORD-005: Đóng băng đơn giá tại thời điểm tạo đơn (Price Snapshot)
 - **Tên quy tắc:** Lưu trữ giá vé cố định tại thời điểm tạo đơn.
-- **Mô tả:** Đơn giá vé (`unit_price`), phụ phí (`service_fee`), thuế (`VAT`), và số tiền giảm giá từ khuyến mãi (`discount_amount`) phải được lưu dạng giá trị cố định (snapshot) trong bảng `order_items` tại thời điểm tạo đơn. Mọi điều chỉnh bảng giá sau đó của Ban tổ chức không làm thay đổi số tiền phải trả của đơn hàng đã tạo.
+- **Mô tả:** Giá vé từng ghế phải được lưu thành snapshot bất biến trong `order_items`. Phí dịch vụ và thuế (nếu áp dụng) phải được lưu thành số tiền nguyên VND snapshot trên orders; discount_amount luôn bằng 0 trong baseline vì voucher nằm ngoài phạm vi theo D-031. Mọi tổng tiền được tính từ snapshot, không lấy giá hiện hành để sửa đơn đã tạo.
 
 #### BR-ORD-006: Mã đơn hàng duy nhất và chuẩn định dạng (Order Code Format)
 - **Tên quy tắc:** Mã đơn hàng toàn hệ thống là duy nhất.
@@ -159,7 +156,7 @@ Tài liệu phục vụ làm căn cứ chuẩn xác để:
 
 #### BR-ORD-008: Chặn tạo đơn trùng lặp (Idempotent Order Creation)
 - **Tên quy tắc:** Chống tạo đơn hàng kép do click nhiều lần.
-- **Mô tả:** Yêu cầu tạo đơn hàng từ client phải đính kèm một `Idempotency-Key` (UUIDv4 sinh từ client). Nếu nhận được nhiều yêu cầu có cùng key trong vòng 30 giây, hệ thống chỉ tạo 1 đơn hàng duy nhất và trả về cùng một kết quả cho các request sau.
+- **Mô tả:** Yêu cầu tạo đơn hàng từ client phải đính kèm một `Idempotency-Key` (UUIDv4 sinh từ client). Trong thời hạn lưu idempotency tối thiểu 24 giờ, hệ thống chỉ tạo 1 đơn hàng cho cùng key và trả lại cùng kết quả cho các request lặp. Khóa được lưu bền vững cùng đơn hàng; TTL Redis không phải cơ chế duy nhất bảo đảm chống tạo trùng.
 
 ---
 
@@ -175,13 +172,13 @@ Tài liệu phục vụ làm căn cứ chuẩn xác để:
   1. Nếu giao dịch đã ở trạng thái `SUCCESS`, hệ thống chỉ ghi log, trả mã phản hồi `200 OK` (hoặc format cổng yêu cầu) và không thực hiện xử lý lại việc phát hành vé.
   2. Bắt buộc kiểm tra chữ ký số (Checksum/HMAC SHA512) của nhà cung cấp thanh toán trước khi chấp nhận dữ liệu Webhook.
 
-#### BR-PAY-003: Xử lý thanh toán thành công sau khi ghế đã hết hạn giữ (Late Payment Callback Race Condition)
-- **Tên quy tắc:** Xử lý biên thanh toán muộn (Late Payment Resolution).
-- **Mô tả:** Trường hợp khách hàng đã trừ tiền thành công tại cổng thanh toán nhưng Webhook trả về hệ thống SAU KHI đơn hàng đã chuyển sang `OUT_TIME` và ghế đã bị người khác mua mất (`seat.status = SOLD` cho user khác):
-  1. Tuyệt đối KHÔNG ghi đè ghế đã bán cho người khác.
-  2. Hệ thống tự động ghi nhận trạng thái giao dịch thanh toán là `SUCCESS_UNFULFILLED`.
-  3. Lập tức tự động kích hoạt lệnh hoàn tiền 100% về tài khoản/ví của khách hàng thông qua cổng thanh toán tương ứng.
-  4. Gửi email và SMS giải thích rõ lý do giao dịch bị trễ phiên thanh toán kèm mã giao dịch hoàn tiền.
+#### BR-PAY-003: Xử lý thanh toán thành công sau khi ghế đã hết hạn giữ (Late Payment Callback)
+- **Tên quy tắc:** Không hồi sinh hold hết hạn và không ghi đè ghế khác.
+- **Mô tả:** Nếu đối soát xác nhận provider đã thu tiền nhưng hold_expires_at <= now() hoặc order không thể claim nguyên tử toàn bộ ghế:
+  1. Không tạo order mới, không hồi sinh hold, không chiếm ghế đã được giữ/bán cho khách khác; payment transaction chuyển SUCCESS_UNFULFILLED.
+  2. Tạo một logical refund 100% số tiền thực thu, bao gồm khoản đã thu, với idempotency key duy nhất; không phát hành ticket.
+  3. Refund chỉ gửi khi provider status được xác minh; timeout/retry theo BR-RFD-005 và D-032, không retry mù.
+  4. Giữ audit đầy đủ và thông báo REFUND_PENDING/UNKNOWN cho tới khi có kết quả provider; chỉ thông báo hoàn tất sau xác nhận.
 
 #### BR-PAY-004: Thời hạn chuyển hướng thanh toán (Gateway Redirection Timeout)
 - **Tên quy tắc:** Giới hạn thời gian mở cổng thanh toán.
@@ -193,7 +190,7 @@ Tài liệu phục vụ làm căn cứ chuẩn xác để:
 
 #### BR-PAY-006: Khớp đúng số tiền thanh toán (Amount Verification Guard)
 - **Tên quy tắc:** Số tiền thanh toán thành công phải khớp 100% với giá trị đơn hàng.
-- **Mô tả:** Khi nhận Webhook IPN, hệ thống bắt buộc so khớp trường số tiền thanh toán (`amount`) từ cổng trả về với trường `total_amount` lưu trong cơ sở dữ liệu. Nếu phát hiện sai lệch dù chỉ 1 đồng, hệ thống lập tức từ chối cập nhật trạng thái đơn, đánh dấu cờ gian lận (`SUSPICIOUS_PAYMENT_FRAUD`) và gửi cảnh báo khẩn cho đội ngũ an ninh.
+- **Mô tả:** Khi nhận Webhook IPN, hệ thống bắt buộc so khớp trường số tiền thanh toán (`amount`) từ cổng trả về với trường `final_amount` lưu trong cơ sở dữ liệu (số tiền thực sự gửi tới cổng thanh toán). Nếu phát hiện sai lệch dù chỉ 1 đồng, hệ thống lập tức từ chối cập nhật trạng thái đơn, đánh dấu cờ gian lận (`SUSPICIOUS_PAYMENT_FRAUD`) và gửi cảnh báo khẩn cho đội ngũ an ninh.
 
 #### BR-PAY-007: Cơ chế Reconcile đối soát định kỳ (Daily Payment Reconciliation)
 - **Tên quy tắc:** Đối soát tự động hàng ngày giữa hệ thống và cổng thanh toán.
@@ -212,9 +209,9 @@ Tài liệu phục vụ làm căn cứ chuẩn xác để:
 - **Mô tả:** Ngay khi đơn hàng nhận trạng thái `PAID`, hệ thống tự động sinh các bản ghi vé tương ứng trong bảng `tickets` với trạng thái ban đầu là `ORDERED`. Mỗi ghế tương ứng với một vé điện tử độc lập.
 - **Thời gian xử lý:** Toàn bộ vé và mã QR phải được tạo và sẵn sàng hiển thị trên App/Web của người dùng trong vòng dưới 3 giây sau khi thanh toán thành công.
 
-#### BR-TCK-002: Mã hóa QR Code động chống chụp màn hình (Dynamic QR Security)
-- **Tên quy tắc:** Mã QR check-in bảo mật, chống giả mạo và chống chia sẻ ảnh chụp màn hình.
-- **Mô tả:** Mã QR hiển thị trên ứng dụng của khách hàng là dạng mã hóa động (Dynamic TOTP-based QR Code) được làm mới định kỳ mỗi 30-60 giây hoặc sử dụng thuật toán mã hóa công khai RSA/ECC chứa: `ticket_id`, `concert_id`, `seat_id`, `timestamp`, `digital_signature`.
+#### BR-TCK-002: QR Code động có chữ ký số và thời hạn ngắn (Dynamic QR Security)
+- **Tên quy tắc:** Mã QR check-in có chữ ký số, hạn chế giả mạo và giảm rủi ro chia sẻ ảnh chụp màn hình.
+- **Mô tả:** QR động hiển thị trên ứng dụng là JWT/JWS ký số bằng RS256, chứa định danh vé, concert, ghế, thời điểm phát hành (`iat`), thời điểm hết hạn (`exp = iat + 60 giây`) và nonce. Ứng dụng làm mới token mỗi 30 giây; token cũ vẫn hợp lệ đến `exp` và chỉ bị từ chối khi `exp <= now()` hoặc vé không còn ở trạng thái hợp lệ. Khóa riêng ký token được bảo vệ và luân chuyển an toàn; ứng dụng/thiết bị xác thực bằng khóa công khai.
 - **Ngoại lệ:** Đối với phiên bản in vé PDF hoặc vé gửi qua email cho người dùng không có smartphone, áp dụng mã QR tĩnh có chữ ký số mã hóa bảo mật cao kết hợp kiểm tra giấy tờ tùy thân (CCCD) tại cửa.
 
 #### BR-TCK-003: Quy tắc một lần check-in duy nhất (Single Check-in Enforcement)
@@ -228,13 +225,9 @@ Tài liệu phục vụ làm căn cứ chuẩn xác để:
 - **Tên quy tắc:** Nhân viên soát vé chỉ được quét vé thuộc sự kiện được phân công.
 - **Mô tả:** Tài khoản Staff chỉ có quyền quét và xác thực vé của đúng concert và đúng cổng/khu vực (Zone/Gate) mà ban tổ chức đã gán quyền. Quét vé của concert khác hoặc sai phân khu VIP/Standard sẽ bị từ chối với thông báo "Sai cổng vào".
 
-#### BR-TCK-005: Hoạt động chế độ Offline dự phòng tại cổng soát vé (Offline Check-in Fallback)
-- **Tên quy tắc:** Cho phép check-in offline có kiểm soát khi mất mạng tại cổng.
-- **Mô tả:** Khi kết nối internet tại cổng sự kiện bị gián đoạn, máy quét chuyên dụng của nhân viên tự động chuyển sang chế độ Offline:
-  1. Xác thực vé dựa trên chữ ký mật mã (Public Key Cryptography) của mã QR.
-  2. Ghi nhận lịch sử check-in vào bộ nhớ mã hóa cục bộ của máy quét.
-  3. Tự động đồng bộ (sync) dữ liệu check-in lên máy chủ trung tâm ngay khi có lại kết nối mạng.
-  4. Nếu phát hiện cùng 1 mã QR bị quét tại 2 máy offline khác nhau, hệ thống ghi nhận cờ cảnh báo an ninh (`SECURITY_BREACH_DUPLICATE_ENTRY`) để bảo vệ xử lý tại hiện trường.
+#### BR-TCK-005: Không hỗ trợ check-in offline trong baseline
+- **Tên quy tắc:** Check-in yêu cầu xác thực online để bảo đảm một vé chỉ được sử dụng một lần.
+- **Mô tả:** Scanner phải kết nối Check-in Service để xác minh chữ ký, concert, thời gian, gate và trạng thái ticket; cập nhật ORDERED → CHECKED bằng thao tác atomic. Khi mất mạng/không xác minh được, ứng dụng fail-closed, không nhận vé từ local cache và báo Gate Supervisor để xử lý sự cố tại địa điểm. Offline synchronization và local ticket cache nằm ngoài baseline (D-023).
 
 #### BR-TCK-006: Định danh chủ sở hữu vé và chuyển nhượng (Ticket Ownership & Transfer)
 - **Tên quy tắc:** Vé gắn liền với thông tin cá nhân của người mua vé.
@@ -253,42 +246,34 @@ Tài liệu phục vụ làm căn cứ chuẩn xác để:
 
 ### 3.6 Phân hệ Hủy đơn & Hoàn tiền (Refunds & Cancellations)
 
-#### BR-RFD-001: Chính sách khấu trừ hoàn tiền theo mốc thời gian (Tiered Refund Policy)
-- **Tên quy tắc:** Tỷ lệ hoàn tiền căn cứ vào số ngày trước ngày diễn ra sự kiện.
-- **Mô tả:** Khi khách hàng gửi yêu cầu hủy đơn hàng đã thanh toán (`order.status = PAID`), hệ thống áp dụng tỷ lệ hoàn tiền nghiêm ngặt căn cứ theo thời điểm gửi yêu cầu so với ngày biểu diễn (`concert.event_date`):
-  1. **Yêu cầu gửi trước > 7 ngày (trên 168 giờ):** Hoàn lại **100%** giá trị tiền vé (không bao gồm phụ phí giao dịch của cổng thanh toán nếu có).
-  2. **Yêu cầu gửi từ 3 ngày đến 7 ngày (từ 72 giờ đến 168 giờ):** Hoàn lại **50%** giá trị tiền vé.
-  3. **Yêu cầu gửi dưới 3 ngày (dưới 72 giờ):** **0% hoàn tiền** (Không được phép hủy hoặc hoàn tiền dưới bất kỳ hình thức nào).
-- **Ngoại lệ:** Trừ trường hợp Concert bị hủy hoặc hoãn do lỗi của Ban tổ chức (`BR-RFD-004`).
+#### BR-RFD-001: Chính sách hoàn tiền theo ngày lịch địa phương
+- **Tên quy tắc:** Tỷ lệ hoàn tiền tự nguyện dựa trên số ngày lịch còn lại tới ngày diễn.
+- **Mô tả:** Dùng days_before = event_local_date - request_local_date, chuyển đổi theo timezone địa điểm (mặc định Asia/Ho_Chi_Minh):
+  1. days_before >= 7: hoàn 100% tổng giá vé đủ điều kiện.
+  2. 3 <= days_before <= 6: hoàn 50% tổng giá vé đủ điều kiện; tính trên tổng order một lần và làm tròn half-up tới 1 VND.
+  3. 0 <= days_before <= 2: không đủ điều kiện hoàn tự nguyện.
+- **Loại trừ:** Phí dịch vụ và thuế không hoàn theo yêu cầu tự nguyện; hủy concert do Organizer/Admin theo BR-RFD-004 hoàn 100% order.final_amount.
+- **Ngoại lệ:** Concert đã hủy áp dụng BR-RFD-004; order có ticket CHECKED vẫn bị chặn đối với yêu cầu hủy tự nguyện theo BR-RFD-006.
 
 #### BR-RFD-002: Nguyên tắc hoàn tiền toàn bộ đơn hàng (Full Order Cancellation Only)
 - **Tên quy tắc:** Chỉ cho phép hoàn tiền theo toàn bộ đơn hàng, không hoàn tiền lẻ từng ghế.
 - **Mô tả:** Khi khách hàng yêu cầu hủy đơn hàng, hệ thống thực hiện hủy toàn bộ các vé trong đơn hàng đó. Không hỗ trợ hủy 1 ghế và giữ lại 3 ghế trong đơn 4 vé nhằm đảm bảo tính toàn vẹn của giao dịch thanh toán gốc.
 
-#### BR-RFD-003: Trả ghế về trạng thái AVAILABLE khi hoàn tiền thành công (Seat Release on Refund)
-- **Tên quy tắc:** Ghế của vé hoàn được mở bán lại ngay sau khi hoàn tất hủy vé.
-- **Mô tả:** Ngay khi yêu cầu hủy vé được chấp thuận và trạng thái đơn chuyển sang `REFUND_PENDING` / `REFUNDED`:
-  1. Vé liên quan lập tức chuyển trạng thái sang `CANCELLED`. Mã QR check-in bị vô hiệu hóa tức thì.
-  2. Các ghế tương ứng chuyển từ `SOLD` về `AVAILABLE` và hiển thị lại trên sơ đồ ghế để phục vụ các khách hàng khác (nếu concert còn mở bán).
+#### BR-RFD-003: Vô hiệu hóa vé và giải phóng ghế khi hủy tự nguyện
+- **Tên quy tắc:** Khi khách xác nhận yêu cầu hủy đủ điều kiện, vé bị vô hiệu hóa ngay và không thể check-in.
+- **Mô tả:** Trong cùng transaction với chuyển order sang REFUND_PENDING, ticket chuyển CANCELLED, QR bị vô hiệu hóa, và ghế có thể chuyển SOLD → AVAILABLE chỉ khi concert vẫn ON_SALE. Nếu refund sau đó thất bại, order chuyển REFUND_FAILED, ticket vẫn vô hiệu và chuyển vào hàng đợi xử lý thủ công; không tự đưa order về PAID. Quy tắc này không áp dụng cho concert bị hủy, nơi ghế không được mở bán lại.
 
-#### BR-RFD-004: Hoàn tiền 100% khi Concert bị hủy (Concert Cancellation Refund Policy)
-- **Tên quy tắc:** Hoàn tiền 100% tự động cho khách hàng khi Ban tổ chức hoặc Admin hủy concert.
-- **Mô tả:** Trường hợp sự kiện bị hủy bỏ bởi Ban tổ chức hoặc Admin vì lý do bất khả kháng (thời tiết, thiên tai, nghệ sĩ hủy show, vi phạm pháp lý):
-  1. Hệ thống tự động tạo lệnh hoàn tiền 100% cho tất cả đơn hàng ở trạng thái `PAID`.
-  2. Tiền được tự động hoàn trả về đúng nguồn tiền gốc (ví MoMo hoặc tài khoản ngân hàng liên kết VNPay) mà khách hàng đã thanh toán.
-  3. Toàn bộ vé phát hành tự động chuyển sang `CANCELLED`.
-  4. Gửi email và thông báo đẩy xin lỗi và hướng dẫn nhận tiền hoàn đến 100% khách hàng bị ảnh hưởng.
+#### BR-RFD-004: Hoàn tiền khi Concert bị hủy
+- **Tên quy tắc:** Tự động hoàn 100% tổng số tiền đã thu cho mọi order PAID khi concert bị hủy trước COMPLETED.
+- **Mô tả:** Tất cả ticket của concert bị hủy đều mất hiệu lực và order PAID chuyển REFUND_PENDING, kể cả ticket CHECKED. Hoàn trả order.final_amount đầy đủ (gồm phí dịch vụ/thuế đã thu) về nguồn thanh toán gốc; ticket chuyển CANCELLED, check-in log được giữ nguyên. Ghế của concert bị hủy vẫn không khả dụng và không được đưa lại vào bán. Concert COMPLETED không thể chuyển sang CANCELLED; mọi xử lý sau hoàn thành là quy trình khiếu nại ngoài luồng batch. Notification chỉ xác nhận đã hoàn khi provider xác nhận COMPLETED (D-017).
 
-#### BR-RFD-005: Thời gian xử lý hoàn tiền của cổng thanh toán (Refund Processing SLA)
-- **Tên quy tắc:** Thời gian hoàn tiền tùy thuộc vào phương thức thanh toán gốc.
-- **Mô tả:**
-  - Đối với Ví điện tử (MoMo): Tiền hoàn về ví trong vòng 1-2 ngày làm việc.
-  - Đối với Thẻ ATM nội địa: Tiền về tài khoản trong vòng 3-5 ngày làm việc.
-  - Đối với Thẻ tín dụng quốc tế (Visa/Mastercard): Tiền về tài khoản theo kỳ sao kê ngân hàng (7-15 ngày làm việc).
+#### BR-RFD-005: Thời gian xử lý hoàn tiền do nhà cung cấp quyết định
+- **Tên quy tắc:** Không cam kết SLA tiền về từ phía hệ thống bán vé.
+- **Mô tả:** Sau khi provider xác nhận hoàn tiền, thời gian tiền xuất hiện trên ví/tài khoản phụ thuộc provider, ngân hàng phát hành và phương thức thanh toán. Có thể hiển thị hướng dẫn hoặc ước tính nếu provider công bố, nhưng phải ghi rõ không phải cam kết của nền tảng. Hệ thống lưu trạng thái provider và chỉ thông báo hoàn tất khi có xác nhận COMPLETED.
 
-#### BR-RFD-006: Khóa tính năng hoàn tiền cho vé đã check-in (No Refund on Checked-in Tickets)
-- **Tên quy tắc:** Vé đã check-in không được phép hoàn tiền dưới mọi lý do.
-- **Mô tả:** Nếu có ít nhất một vé trong đơn hàng đã ở trạng thái `CHECKED`, toàn bộ đơn hàng đó bị khóa tính năng hoàn tiền vĩnh viễn.
+#### BR-RFD-006: Chặn hủy tự nguyện cho order có ticket đã check-in
+- **Tên quy tắc:** Không nhận yêu cầu refund thông thường của khách hàng cho order có ticket CHECKED.
+- **Mô tả:** Nếu có ít nhất một ticket CHECKED, từ chối yêu cầu tự nguyện theo BR-RFD-001 và giữ nguyên ticket/seat/order. Quy tắc này không áp dụng cho concert bị hủy trước COMPLETED; trường hợp đó luôn theo BR-RFD-004 và hoàn mọi order PAID, kể cả đã check-in.
 
 #### BR-RFD-007: Đối soát và trừ tiền doanh thu của Organizer khi hoàn tiền (Organizer Balance Adjustment)
 - **Tên quy tắc:** Số tiền hoàn được khấu trừ vào công nợ quyết toán của Organizer.
@@ -303,11 +288,12 @@ Tài liệu phục vụ làm căn cứ chuẩn xác để:
 - **Mô tả:** Ban tổ chức (Organizer) khi tạo concert mới, concert sẽ có trạng thái `PENDING_REVIEW`. Concert chỉ được chuyển sang trạng thái `PUBLISHED` khi có phê duyệt chính thức từ tài khoản có quyền Admin.
 - **Cam kết dịch vụ (SLA):** Admin cam kết xử lý phê duyệt hoặc phản hồi yêu cầu chỉnh sửa trong vòng tối đa 48 giờ kể từ khi nhận hồ sơ.
 
-#### BR-CON-002: Đóng băng thông tin nhạy cảm sau khi đã mở bán (Data Freeze on Sale)
-- **Tên quy tắc:** Cấm sửa đổi thông tin trọng yếu khi concert đã mở bán hoặc đã bán vé.
-- **Mô tả:** Khi concert chuyển sang trạng thái `ON_SALE` hoặc khi đã có ít nhất 1 vé được bán (`status = SOLD`):
-  1. Tuyệt đối KHÔNG được sửa đổi: Sơ đồ ghế, giá vé các hạng, địa điểm tổ chức, thời gian biểu diễn.
-  2. Chỉ được phép sửa đổi: Mô tả chi tiết, hình ảnh banner giới thiệu, danh sách ca sĩ khách mời (không ảnh hưởng pháp lý hợp đồng vé).
+#### BR-CON-002: Quyền sửa concert theo trạng thái (Concert Data Change Control)
+- **Tên quy tắc:** Kiểm soát nội dung và thông tin thương mại theo vòng đời concert.
+- **Mô tả:**
+  1. Trước ON_SALE, Organizer được sửa mô tả, media và nội dung không ảnh hưởng hợp đồng vé; thay đổi được audit.
+  2. Đổi event_date/time, venue, seat map, ticket zone hoặc giá sau PUBLISHED phải gửi Admin duyệt lại; chỉ có hiệu lực sau phê duyệt và phải thông báo khách hàng bị ảnh hưởng nếu đã có giao dịch.
+  3. Từ ON_SALE trở đi, khóa trực tiếp các trường lịch, venue, seat map, zone và giá. Thay đổi khẩn cấp dùng luồng amendment/cancellation có Admin audit; không sửa snapshot order đã tạo (D-021).
 
 #### BR-CON-003: Điều kiện mở bán concert (Sale Start Precondition)
 - **Tên quy tắc:** Concert chỉ mở bán khi đã được công bố và đến đúng giờ cấu hình.
@@ -322,11 +308,11 @@ Tài liệu phục vụ làm căn cứ chuẩn xác để:
 
 #### BR-CON-005: Phí hoa hồng nền tảng và quyết toán (Platform Commission & Payout)
 - **Tên quy tắc:** Nền tảng tự động trích hoa hồng trước khi quyết toán cho Organizer.
-- **Mô tả:** Hệ thống tự động tính phí hoa hồng nền tảng (ví dụ: 5% - 10% tổng doanh thu bán vé thực tế) trên từng đơn hàng thành công. Toàn bộ tiền bán vé được giữ tại tài khoản đảm bảo (Escrow Account) của nền tảng và chỉ được quyết toán (payout) cho Ban tổ chức sau khi sự kiện đã diễn ra thành công (`COMPLETED`) và hoàn tất thời hạn khiếu nại (sau 3-5 ngày).
+- **Mô tả:** Tỷ lệ/phương pháp tính phí, phí cố định, chi phí refund, thời điểm đủ điều kiện và thời gian chờ payout phải lấy từ hợp đồng đã ký và được lưu thành snapshot phiên bản trong hồ sơ quyết toán; không mặc định tỷ lệ, thời hạn khiếu nại hay tài khoản escrow. Chỉ lập quyết toán sau khi concert COMPLETED, payment/refund đã đối soát và không còn trạng thái UNKNOWN hoặc hold chưa xử lý. Admin có thẩm quyền phê duyệt; bằng chứng và mã tham chiếu payout được lưu audit. Trước khi ký hợp đồng và Legal/Finance phê duyệt, không được mở payout production (D-034).
 
 #### BR-CON-006: Điều kiện Organizer chủ động hủy concert (Organizer Cancellation Guard)
 - **Tên quy tắc:** Ràng buộc pháp lý và bồi thường khi Organizer yêu cầu hủy concert.
-- **Mô tả:** Organizer chỉ được gửi yêu cầu hủy concert trước thời điểm biểu diễn tối thiểu 72 giờ. Khi hủy concert, Organizer chịu toàn bộ chi phí phí cổng thanh toán phát sinh cho việc hoàn tiền vé cho khách hàng theo hợp đồng hợp tác.
+- **Mô tả:** Organizer gửi yêu cầu hủy để Admin xem xét; không tự động từ chối theo mốc 72 giờ. Nghĩa vụ thông báo, chi phí cổng hoàn tiền và trách nhiệm tài chính được quyết định theo hợp đồng đã ký và chính sách khẩn cấp được Legal/Finance phê duyệt. Khi yêu cầu được duyệt, mọi order PAID được xử lý theo BR-RFD-004 (D-017/D-034).
 
 #### BR-CON-007: Giới hạn số lượng concert đang chạy của Organizer mới (Organizer Event Quota)
 - **Tên quy tắc:** Giới hạn tổ chức sự kiện cho đối tác mới.
@@ -358,9 +344,27 @@ Tài liệu phục vụ làm căn cứ chuẩn xác để:
 
 ---
 
+
+### 3.9 Phân hệ Thông báo & Tùy chọn nhận tin (Notifications)
+
+#### BR-NOTI-001: Thông báo giao dịch và bảo mật bắt buộc
+- **Tên quy tắc:** Không cho tắt thông báo in-app về giao dịch, bảo mật và thay đổi sự kiện ảnh hưởng trực tiếp đến vé.
+- **Mô tả:** Sự kiện OTP, thanh toán/đơn hàng, phát hành hoặc vô hiệu hóa vé, hủy/đổi lịch concert và hoàn tiền phải tạo thông báo in-app. Kênh email/push/SMS theo ma trận sự kiện, địa chỉ đã xác minh và consent áp dụng. User preference không được tắt thông báo in-app bắt buộc. Chỉ xác nhận đã đưa vào hàng đợi khi outbox/broker chấp nhận; không tuyên bố chắc chắn provider đã giao.
+
+#### BR-NOTI-002: Retry và kênh dự phòng có kiểm soát
+- **Tên quy tắc:** Xử lý lỗi gửi theo ma trận kênh và chính sách retry có giới hạn.
+- **Mô tả:** Lỗi gửi được ghi nhận và retry có giới hạn qua RabbitMQ; dùng cùng định danh thông báo. Chỉ chuyển kênh khi sự kiện cho phép, kênh dự phòng đã xác minh/được consent và provider có thể xử lý. Không suy diễn trạng thái provider chấp nhận là người nhận đã đọc; lỗi cuối cùng phải vào DLQ hoặc hàng đợi vận hành.
+
+#### BR-NOTI-003: Chống tạo thông báo trùng
+- **Tên quy tắc:** Một thông báo logic chỉ được tạo một lần cho mỗi sự kiện, người nhận, kênh và mục đích.
+- **Mô tả:** Dùng deduplication key ổn định, có unique constraint trong SQL Server cho mỗi thông báo. RabbitMQ redelivery, consumer retry hoặc callback lặp không tạo bản ghi/thao tác gửi logic thứ hai. Redis chỉ là lớp tăng tốc tùy chọn; tính duy nhất bền vững do SQL Server bảo đảm.
+
+---
+
 ## 4. Ma Trận Ràng Buộc & Quan Hệ Phụ Thuộc (Rule Dependency Matrix)
 
 Sơ đồ thể hiện sự phụ thuộc và kích hoạt giữa các phân hệ quy tắc nghiệp vụ:
+
 
 ```mermaid
 graph TD
@@ -369,7 +373,7 @@ graph TD
         R_Q2 --> R_Q5["BR-QUEUE-005<br/>Giới hạn 5.000 CCU"]
         R_Q3["BR-QUEUE-003<br/>Đến sau xếp FIFO"] --> R_Q5
         R_Q4["BR-QUEUE-004<br/>1 Token/Tài khoản"] -.-> R_Q5
-        R_Q6["BR-QUEUE-006<br/>Timeout 2 phút Inactive"] --> R_Q5
+        R_Q6["BR-QUEUE-006<br/>Queue token timeout 120s; seat hold 600s độc lập"] --> R_Q5
     end
 
     subgraph S2["Sơ Đồ Ghế & Khóa Ghế"]
@@ -388,7 +392,7 @@ graph TD
 
     subgraph S4["Vé & Check-in"]
         R_P2 -->|Thanh toán thành công| R_T1["BR-TCK-001<br/>Phát hành vé ORDERED"]
-        R_T1 --> R_T2["BR-TCK-002<br/>Mã hóa QR Dynamic"]
+        R_T1 --> R_T2["BR-TCK-002<br/>QR động RS256"]
         R_T2 --> R_T3["BR-TCK-003<br/>Check-in 1 lần"]
         R_T3 -->|Check-in thành công| R_RV1["BR-REV-001<br/>Quyền đánh giá"]
     end
@@ -396,6 +400,13 @@ graph TD
     subgraph S5["Hoàn Tiền"]
         R_P2 -->|Yêu cầu hủy đơn| R_RF1["BR-RFD-001<br/>Khấu trừ theo mốc: 100% / 50% / 0%"]
         R_RF1 --> R_RF3["BR-RFD-003<br/>Giải phóng ghế lại sơ đồ"]
+    end
+
+    subgraph S6["Thông Báo"]
+        R_P2 --> N1["BR-NOTI-001<br/>Thông báo giao dịch"]
+        R_RF1 --> N1
+        N1 --> N2["BR-NOTI-002<br/>Retry/fallback có kiểm soát"]
+        N1 --> N3["BR-NOTI-003<br/>Dedup bền vững"]
     end
 ```
 

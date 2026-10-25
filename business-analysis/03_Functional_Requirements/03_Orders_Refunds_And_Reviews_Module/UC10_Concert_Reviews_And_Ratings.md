@@ -21,6 +21,39 @@ Use case này cho phép khách hàng đã thực sự tham dự concert (check-i
 
 ---
 
+<!-- BEGIN MERMAID USE-CASE UC10 -->
+### Sơ đồ Use Case (Mermaid)
+
+```mermaid
+flowchart LR
+  customer["👤 Khách hàng đã tham dự"]
+  viewer["👤 Khách xem concert"]
+  admin["👤 Admin kiểm duyệt"]
+  subgraph SYS["Concert Ticketing System — UC10"]
+    direction TB
+    create(["Gửi đánh giá sao và nhận xét"])
+    eligibility(["Kiểm tra vé CHECKED và điều kiện đánh giá"])
+    moderate(["Tự động kiểm duyệt nội dung"])
+    edit(["Chỉnh sửa đánh giá"])
+    delete(["Xóa đánh giá"])
+    public(["Xem đánh giá và điểm trung bình công khai"])
+    adminReview(["Kiểm duyệt nội dung vi phạm"])
+  end
+  customer --- create
+  create -.->|«bao gồm»| eligibility
+  create -.->|«bao gồm»| moderate
+  customer --- edit
+  customer --- delete
+  viewer --- public
+  admin --- adminReview
+  moderate -.->|«chuyển xử lý khi cần»| adminReview
+  note["Chỉ người có vé CHECKED được đánh giá sau khi concert COMPLETED và trong 30 ngày kể từ completed_at; mỗi customer chỉ có một review cho concert."]
+  eligibility -.-> note
+  classDef actor fill:#fff,stroke:#334155,stroke-width:1px
+  class customer,viewer,admin actor
+```
+<!-- END MERMAID USE-CASE UC10 -->
+
 ## 3. Điều Kiện Tiên Quyết (Preconditions)
 
 - Customer đã đăng nhập.

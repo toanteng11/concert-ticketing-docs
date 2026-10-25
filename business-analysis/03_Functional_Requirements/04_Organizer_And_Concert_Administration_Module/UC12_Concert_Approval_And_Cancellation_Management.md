@@ -1,4 +1,4 @@
-﻿# UC12 — Phê Duyệt & Quản Lý Concert (Admin)
+# UC12 — Phê Duyệt & Quản Lý Concert (Admin)
 
 ## 1. Thông Tin Chung
 
@@ -19,6 +19,46 @@
 Use case này mô tả quy trình Admin xem xét hồ sơ concert do Organizer gửi lên, đưa ra quyết định phê duyệt, yêu cầu chỉnh sửa, hoặc từ chối. Ngoài ra bao gồm quyền hủy concert khẩn cấp và quản lý vận hành hệ thống bán vé.
 
 ---
+
+<!-- BEGIN MERMAID USE-CASE UC12 -->
+### Sơ đồ Use Case (Mermaid)
+
+```mermaid
+flowchart LR
+  admin["👤 Admin đã xác thực 2FA"]
+  organizer["👤 Organizer"]
+  payment["VNPay / MoMo Gateway"]
+  subgraph SYS["Concert Ticketing System — UC12"]
+    direction TB
+    review(["Xem xét hồ sơ concert PENDING_REVIEW"])
+    approve(["Phê duyệt và chuyển sang PUBLISHED"])
+    revision(["Yêu cầu Organizer chỉnh sửa"])
+    reject(["Từ chối hồ sơ"])
+    requestCancel(["Gửi yêu cầu hủy concert"])
+    emergencyCancel(["Admin hủy concert khẩn cấp khi đang bán"])
+    refund(["Tạo batch hoàn tiền cho đơn PAID đủ điều kiện"])
+    notify(["Gửi thông báo quyết định và kết quả xử lý"])
+  end
+  admin --- review
+  review -.->|«quyết định»| approve
+  review -.->|«quyết định»| revision
+  review -.->|«quyết định»| reject
+  organizer --- requestCancel
+  admin --- emergencyCancel
+  emergencyCancel -.->|«xử lý đơn đủ điều kiện»| refund
+  payment --- refund
+  approve --- notify
+  revision --- notify
+  reject --- notify
+  refund --- notify
+  note["Hủy concert trước COMPLETED: mọi order PAID, kể cả có ticket CHECKED, được refund 100% order.final_amount. Ticket bị vô hiệu hóa, checkin log giữ nguyên, ghế không mở bán lại theo D-017."]
+  refund -.-> note
+  classDef actor fill:#fff,stroke:#334155,stroke-width:1px
+  classDef provider fill:#f1f5f9,stroke:#64748b,stroke-width:1px
+  class admin,organizer actor
+  class payment provider
+```
+<!-- END MERMAID USE-CASE UC12 -->
 
 ## 3. Luồng Chính A — Phê Duyệt Concert
 
@@ -58,8 +98,8 @@ Use case này mô tả quy trình Admin xem xét hồ sơ concert do Organizer g
 |---|---|
 | 1 | Admin tìm concert đang ON_SALE → Click "Hủy khẩn cấp" |
 | 2 | Màn cảnh báo: Hiển thị số đơn PAID bị ảnh hưởng, tổng tiền cần hoàn; yêu cầu nhập lý do + xác nhận 2FA |
-| 3 | Admin nhập lý do + xác nhận | `concert.status = CANCELLED`; toàn bộ đơn PAID → REFUND_PENDING; gửi thông báo hàng loạt đến tất cả khách hàng |
-| 4 | Hệ thống tự động xử lý hoàn tiền hàng loạt (Batch Refund Saga) |
+| 3 | Admin nhập lý do + xác nhận | `concert.status = CANCELLED`; mọi order `PAID`, kể cả có vé `CHECKED`, chuyển sang `REFUND_PENDING` và tạo refund 100% `order.final_amount`; mọi ticket bị hủy, checkin log giữ nguyên, ghế không mở lại theo D-017; gửi thông báo in-app |
+| 4 | Refund Service tạo `refunds` record và xử lý theo BR-RFD-004; failure/retry không chuyển order ngược về `PAID` |
 
 ---
 

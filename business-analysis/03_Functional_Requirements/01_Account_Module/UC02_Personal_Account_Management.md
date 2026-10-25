@@ -19,6 +19,30 @@ Use case này cho phép khách hàng xem và cập nhật thông tin hồ sơ c�
 
 ---
 
+<!-- BEGIN MERMAID USE-CASE UC02 -->
+### Sơ đồ Use Case (Mermaid)
+
+```mermaid
+flowchart LR
+  customer["👤 Khách hàng"]
+  subgraph SYS["Concert Ticketing System — UC02"]
+    direction TB
+    profile(["Xem và cập nhật hồ sơ cá nhân"])
+    password(["Đổi mật khẩu"])
+    revoke(["Vô hiệu hóa refresh token cũ"])
+    preferences(["Quản lý tùy chọn thông báo"])
+    activity(["Xem lịch sử hoạt động tài khoản"])
+  end
+  customer --- profile
+  customer --- password
+  password -.->|«bao gồm»| revoke
+  customer --- preferences
+  customer --- activity
+  classDef actor fill:#fff,stroke:#334155,stroke-width:1px
+  class customer actor
+```
+<!-- END MERMAID USE-CASE UC02 -->
+
 ## 3. Luồng Chính & User Stories
 
 ### US-02-01: Cập Nhật Hồ Sơ Cá Nhân

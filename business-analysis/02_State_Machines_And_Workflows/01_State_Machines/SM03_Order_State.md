@@ -1,4 +1,4 @@
-﻿# SM03 — State Machine: Order (Trạng Thái Đơn Hàng)
+# SM03 — State Machine: Order (Trạng Thái Đơn Hàng)
 
 ## 1. Mục Đích
 
@@ -18,9 +18,10 @@ Tài liệu mô tả toàn bộ vòng đời trạng thái của một **Đơn H
 | `PENDING` | Chờ thanh toán | Đơn vừa tạo; ghế đang giữ (`HELD`); đếm ngược 10 phút |
 | `PAID` | Đã thanh toán | IPN Webhook thành công, đúng số tiền, chữ ký hợp lệ; vé đã được phát hành |
 | `OUT_TIME` | Hết hạn thanh toán | 10 phút không hoàn tất thanh toán; ghế tự động trả về `AVAILABLE` |
-| `CANCELLED` | Đã hủy | Khách hủy chủ động (khi PENDING) hoặc concert bị hủy (khi PAID) |
-| `REFUND_PENDING` | Đang xử lý hoàn tiền | Yêu cầu hoàn tiền đã gửi tới cổng thanh toán, chờ xác nhận |
-| `REFUNDED` | Đã hoàn tiền | Tiền đã hoàn về tài khoản/ví khách hàng; vé `CANCELLED` |
+| `CANCELLED` | Đã hủy | Khách hủy đơn khi còn `PENDING`; hold được giải phóng |
+| `REFUND_PENDING` | Đang xử lý hoàn tiền | Refund request đã được chấp nhận; vé bị vô hiệu hóa; chờ kết quả provider |
+| `REFUNDED` | Đã hoàn tiền | Refund record xác nhận hoàn tất; vé `CANCELLED` |
+| `REFUND_FAILED` | Hoàn tiền lỗi cần xử lý | Provider từ chối/hết retry; cần retry hoặc vận hành xử lý thủ công; không khôi phục vé/ghế hay order về `PAID` |
 
 ---
 
@@ -28,26 +29,22 @@ Tài liệu mô tả toàn bộ vòng đời trạng thái của một **Đơn H
 
 ```mermaid
 stateDiagram-v2
-    [*] --> PENDING : Khách hàng tạo đơn hàng\n[ghế đang HELD; countdown 10 phút]
+    [*] --> PENDING : Tạo order từ hold group còn hạn
 
-    PENDING --> PAID : IPN Webhook thành công\n[Chữ ký HMAC hợp lệ\nVÀ amount khớp order.total_amount]
+    PENDING --> PAID : Payment callback hợp lệ\n[số tiền = order.final_amount; order và toàn bộ hold còn hiệu lực]
+    PENDING --> OUT_TIME : Đến orders.expires_at\n[hold group đã hết hạn; ghế được release]
+    PENDING --> CANCELLED : Khách chủ động hủy\n[ghế được release]
 
-    PENDING --> OUT_TIME : Hết hạn 10 phút\n[Timer expired; ghế → AVAILABLE]
-
-    PENDING --> CANCELLED : Khách hàng hủy đơn chủ động\n[Chỉ được hủy khi PENDING\nghế → AVAILABLE ngay lập tức]
-
-    PAID --> REFUND_PENDING : Khách hàng gửi yêu cầu hoàn tiền\n[Guard: trước concert > 3 ngày\nVÀ không có vé nào đã CHECKED]
-
-    PAID --> CANCELLED : Concert bị hủy (Admin kích hoạt)\n[Hệ thống tự động; kích hoạt hoàn tiền 100%]
-
-    REFUND_PENDING --> REFUNDED : Cổng thanh toán xác nhận hoàn tiền thành công\n[IPN Refund Webhook hợp lệ]
-
-    REFUND_PENDING --> PAID : Hoàn tiền thất bại tại cổng\n[Retry hoặc xử lý thủ công bởi Admin]
+    PAID --> REFUND_PENDING : Yêu cầu hoàn tiền được chấp nhận\n[đủ điều kiện theo BR-RFD; không có vé CHECKED]
+    PAID --> REFUND_PENDING : Concert hủy trước COMPLETED\n[100% final_amount cho mọi vé, kể cả CHECKED; D-017]
+    REFUND_PENDING --> REFUNDED : Refund provider xác nhận thành công
+    REFUND_PENDING --> REFUND_FAILED : Refund bị từ chối/hết retry
+    REFUND_FAILED --> REFUND_PENDING : Retry hoặc xử lý thủ công được duyệt
 
     OUT_TIME --> [*]
     CANCELLED --> [*]
     REFUNDED --> [*]
-    PAID --> [*] : Concert COMPLETED + Hết thời hạn khiếu nại
+    PAID --> [*] : Concert kết thúc và hết thời hạn khiếu nại
 ```
 
 ---
@@ -57,45 +54,35 @@ stateDiagram-v2
 | # | Trạng thái hiện tại | Event / Trigger | Guard Condition | Trạng thái kế tiếp | Actor | BR liên quan |
 |---|---|---|---|---|---|---|
 | T-01 | _(Không tồn tại)_ | Khách gọi `POST /orders` | Toàn bộ `seat_ids` trong payload đang ở `HELD` và `hold_user_id = current_user_id`; Tổng vé trong đơn ≤ giới hạn concert; Idempotency-Key chưa xử lý | `PENDING` | Customer | BR-ORD-001, BR-ORD-003, BR-ORD-008 |
-| T-02 | `PENDING` | Nhận IPN Webhook từ VNPay/MoMo | Chữ ký HMAC SHA512 hợp lệ; `amount_paid = order.total_amount`; `order_id` khớp; đơn vẫn còn `PENDING` (chống idempotent) | `PAID` | System (Webhook) | BR-PAY-002, BR-PAY-006 |
-| T-03 | `PENDING` | Timer 10 phút hết hạn | `current_time > order.expires_at` VÀ `order.status = PENDING` | `OUT_TIME` | System (Scheduler) | BR-ORD-002, BR-SEAT-003 |
+| T-02 | `PENDING` | Nhận payment callback hợp lệ | Chữ ký hợp lệ; `amount_paid = order.final_amount`; `order_id` khớp; order còn `PENDING` và thời điểm xử lý nằm trong hold expiry | `PAID` | System (Webhook) | BR-PAY-002, BR-PAY-006 |
+| T-03 | `PENDING` | Worker xử lý hết hạn | `SYSUTCDATETIME() >= order.expires_at` VÀ `order.status = PENDING`; `order.expires_at` kế thừa hạn hold group, không phải `created_at + 600s` | `OUT_TIME` | System (Scheduler/Reconciler) | BR-ORD-002, BR-SEAT-003 |
 | T-04 | `PENDING` | Khách gọi `DELETE /orders/{id}` | `order.customer_id = current_user_id`; `order.status = PENDING` | `CANCELLED` | Customer | BR-ORD-007 |
-| T-05 | `PAID` | Khách gửi `POST /orders/{id}/refund` | `order.status = PAID`; `(concert.event_date - now()) > 72h`; Không có ticket nào có `status = CHECKED` trong đơn hàng này | `REFUND_PENDING` | Customer | BR-RFD-001, BR-RFD-002, BR-RFD-006 |
-| T-06 | `PAID` | Concert bị Admin hủy | `ConcertCancelledEvent` nhận bởi Order Service; `order.status = PAID` | `CANCELLED` | System (Event-driven) | BR-RFD-004 |
-| T-07 | `CANCELLED` (từ PAID) | Hệ thống tự động kích hoạt hoàn tiền | Concert cancelled → `CancelledOrder` triggers refund flow (100%) | `REFUND_PENDING` | System (Auto) | BR-RFD-004 |
-| T-08 | `REFUND_PENDING` | Nhận IPN Refund Webhook thành công | Cổng thanh toán xác nhận hoàn tiền; `refund_amount = order.total_amount` (hoặc % theo chính sách) | `REFUNDED` | System (Webhook) | BR-RFD-005 |
-| T-09 | `REFUND_PENDING` | Hoàn tiền thất bại tại cổng | Cổng trả lỗi (timeout, lỗi ngân hàng); đặt vào Dead Letter Queue để retry hoặc Admin xử lý thủ công | `PAID` (rollback) | System / Admin | BR-RFD-005 |
+| T-05 | PAID | Khách gửi yêu cầu refund | order.status = PAID; tính số ngày lịch tại múi giờ địa điểm theo BR-RFD-001; không có ticket CHECKED theo BR-RFD-006 | REFUND_PENDING hoặc bị từ chối nếu mức refund là 0% | Customer | BR-RFD-001, BR-RFD-002, BR-RFD-006 |
+| T-06 | PAID | Concert bị hủy trước COMPLETED | ConcertCancelledEvent; mọi ticket, kể cả CHECKED, bị vô hiệu hóa; refund 100% order.final_amount; không mở lại ghế | REFUND_PENDING | System (Event-driven) | BR-RFD-004, D-017 |
+| T-07 | `REFUND_PENDING` | Provider xác nhận refund thành công | Số tiền khớp với `refunds.refund_amount`; callback hợp lệ và idempotent | `REFUNDED` | System (Webhook) | BR-RFD-005 |
+| T-08 | `REFUND_PENDING` | Provider từ chối/hết retry | Ghi `refunds.status = FAILED`; tạo tác vụ retry/manual; vé đã hủy và ghế đã giải phóng không tự phục hồi | `REFUND_FAILED` | System / Admin | BR-RFD-005 |
+| T-09 | REFUND_FAILED | Retry hoặc xử lý thủ công | Chỉ sau provider failure xác định; tối đa 3 lần; timeout/UNKNOWN phải reconcile theo D-032; giữ logical idempotency key | REFUND_PENDING | System / Admin | BR-RFD-005, D-019, D-032 |
 
 ---
 
-## 5. Xử Lý Trường Hợp Đặc Biệt: Late Payment Callback (Thanh Toán Callback Trễ)
+## 5. Xử Lý Trường Hợp Đặc Biệt: Late Payment Callback
 
-Đây là edge case nghiêm trọng nhất cần thiết kế cẩn thận:
-
-### Tình huống:
-1. Khách hàng hoàn tất thanh toán tại cổng VNPay/MoMo trước 10 phút.
-2. Do lỗi mạng, IPN Webhook **gửi đến server SAU** khi đơn đã chuyển `OUT_TIME`.
-3. Trong khoảng thời gian đó, ghế đã được người khác mua thành công.
-
-### Phương án xử lý (BR-PAY-003):
+Nếu payment được provider xác nhận thành công sau khi hold hết hạn hoặc order đã OUT_TIME/CANCELLED:
+1. Không hồi sinh hold, không claim lại ghế dù ghế hiện đang trống, không tạo order mới.
+2. Ghi payment transaction SUCCESS_UNFULFILLED; order giữ OUT_TIME/CANCELLED và không phát hành ticket.
+3. Sau reconciliation xác nhận tiền đã thu, tạo một refund 100% số tiền thực thu. Timeout/retry theo D-032; không gửi refund lần thứ hai khi trạng thái UNKNOWN.
 
 ```mermaid
 flowchart TD
-    A["Nhận IPN Webhook từ cổng thanh toán"] --> B["Xác thực chữ ký HMAC\n+ Kiểm tra số tiền"]
-    B --> C{order.status?}
-
-    C -->|PENDING| D["Luồng bình thường:\nCập nhật PAID\nPhát hành vé\n→ seat.status = SOLD"]
-
-    C -->|OUT_TIME hoặc CANCELLED| E{"Tất cả seat_ids\ntrong đơn còn AVAILABLE?"}
-
-    E -->|Còn ghế trống| F["Có thể phục hồi:\nMở lại đơn → PAID\nGiữ lại ghế → SOLD\nPhát hành vé\nGửi thông báo muộn cho khách"]
-
-    E -->|Ghế đã bị người khác mua| G["KHÔNG THỂ PHỤC HỒI:\n1. Ghi nhận payment_transaction.status = SUCCESS_UNFULFILLED\n2. Tạo lệnh hoàn tiền 100% tự động\n3. Gửi email + SMS xin lỗi + mã giao dịch hoàn tiền\n4. Ghi nhận sự kiện vào Audit Log\n5. Alert team vận hành"]
-
-    G --> H["Đơn hàng giữ trạng thái OUT_TIME/CANCELLED\n(Không tạo đơn mới)"]
+    A["Nhận callback"] --> B["Xác thực chữ ký, amount và provider reference"]
+    B --> C{"Provider đã thu tiền?"}
+    C -->|Không| D["Ghi FAILED; giữ order đến expiry"]
+    C -->|Chưa rõ| E["UNKNOWN; reconcile 30s, 5m, 30m; không retry"]
+    C -->|Có| F{"Hold còn hiệu lực và mọi ghế claim nguyên tử được?"}
+    F -->|Có| G["Trong transaction: payment SUCCESS; order PAID; seats SOLD; tickets ORDERED"]
+    F -->|Không| H["SUCCESS_UNFULFILLED; không hồi sinh hold/không tạo order"]
+    H --> I["Tạo logical refund 100% số tiền thực thu theo D-016/D-032"]
 ```
-
----
 
 ## 6. Cơ Chế Idempotency Key (Chống Tạo Đơn Trùng)
 
@@ -107,11 +94,11 @@ sequenceDiagram
 
     C->>API: POST /orders\nHeaders: Idempotency-Key: uuid-xyz\nBody: {seat_ids: [...]}
 
-    API->>DB: SELECT FROM idempotency_keys\nWHERE key = 'uuid-xyz'
+    API->>DB: SELECT id, order_code, status, expires_at, final_amount FROM orders\nWHERE idempotency_key = 'uuid-xyz' (retention ≥ 24h); dựng lại response từ order
 
     alt Key chưa tồn tại
         DB-->>API: NULL (chưa xử lý)
-        API->>DB: INSERT order + INSERT idempotency_key\n(atomic transaction)
+        API->>DB: INSERT order (idempotency_key UNIQUE) + order_items\n(atomic SQL Server transaction)
         DB-->>API: Order tạo thành công
         API-->>C: 201 Created {order_id: "ORD-20261024-XXXXX"}
     else Key đã tồn tại (request trùng lặp)
@@ -146,9 +133,9 @@ Yêu cầu:
 | Invariant | Mô tả |
 |---|---|
 | **INV-ORD-01** | Một đơn hàng chỉ ở đúng một trạng thái tại một thời điểm. |
-| **INV-ORD-02** | `PAID`, `OUT_TIME`, `CANCELLED`, `REFUNDED` đều là trạng thái cuối (Terminal) sau khi đạt được — ngoại trừ `CANCELLED → REFUND_PENDING` khi concert bị hủy. |
+| **INV-ORD-02** | `OUT_TIME`, `CANCELLED`, `REFUNDED` là terminal; `PAID` có thể sang `REFUND_PENDING`; `REFUND_FAILED` chỉ retry/manual theo audit, không rollback thành `PAID`. |
 | **INV-ORD-03** | Không thể tạo đơn hàng khi đang có đơn hàng `PENDING` đang dùng cùng `seat_id`. |
-| **INV-ORD-04** | Số tiền `total_amount` được đóng băng tại thời điểm tạo đơn; không thể thay đổi sau đó. |
+| **INV-ORD-04** | Mọi snapshot tiền bất biến sau khi tạo: `final_amount = total_amount - discount_amount + service_fee_amount + tax_amount`; callback thanh toán phải khớp `final_amount`. |
 | **INV-ORD-05** | Một đơn hàng `PAID` không được hủy nếu có bất kỳ vé nào trong đơn đã ở trạng thái `CHECKED`. |
-| **INV-ORD-06** | `order.expires_at = order.created_at + 600 seconds` (cố định, không thể gia hạn). |
+| **INV-ORD-06** | `order.expires_at` bằng hạn cố định của hold group (600 giây từ lần giữ đầu tiên); tạo order không khởi động lại hoặc gia hạn đồng hồ. |
 

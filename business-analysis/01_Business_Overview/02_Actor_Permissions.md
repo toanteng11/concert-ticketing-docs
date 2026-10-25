@@ -1,4 +1,4 @@
-﻿# Ma Trận Phân Quyền Người Dùng (Actor Permissions & RBAC Matrix)
+# Ma Trận Phân Quyền Người Dùng (Actor Permissions & RBAC Matrix)
 
 ## 1. Giới Thiệu & Mục Đích
 
@@ -105,7 +105,7 @@ graph TD
   - Phân công Staff phụ trách từng cổng soát vé (Gate A, Gate B, Cổng VIP...).
   - Theo dõi Dashboard bán vé thời gian thực: Tỷ lệ lấp đầy ghế, tốc độ bán vé, doanh thu tạm tính, thống kê theo phương thức thanh toán.
   - Theo dõi báo cáo check-in trực tiếp tại hiện trường (số lượng khách đã vào cổng / tổng vé bán).
-  - Yêu cầu đóng bán sớm (`CLOSED`) hoặc gửi yêu cầu hủy concert trước giờ biểu diễn tối thiểu 72 giờ.
+  - Yêu cầu đóng bán sớm (`CLOSED`) hoặc gửi yêu cầu hủy concert để Admin xem xét theo hợp đồng/chính sách đã phê duyệt.
   - Xem báo cáo đối soát và yêu cầu rút tiền/quyết toán doanh thu sau khi concert hoàn tất.
 - **Hành động KHÔNG được phép:**
   - KHÔNG được tự ý xuất bản concert (`PUBLISHED`) mà không qua Admin phê duyệt.
@@ -126,7 +126,7 @@ graph TD
   - Sử dụng camera hoặc đầu đọc laser để quét mã QR vé điện tử của khách hàng.
   - Xem kết quả xác thực vé thời gian thực: Hợp lệ (Màu xanh), Đã check-in trước đó (Màu đỏ kèm thời gian và cổng đã quét), Vé bị hủy/Không hợp lệ (Màu cam/đen).
   - Xem thông tin chi tiết vé sau khi quét thành công: Họ tên khách, hạng vé, khu vực, số ghế, cổng vào.
-  - Kích hoạt chế độ soát vé Offline khi mất kết nối mạng và đồng bộ dữ liệu sau khi có mạng trở lại.
+  - Khi mất kết nối, dừng xác thực tự động và báo Gate Supervisor; không xác nhận vé offline theo D-023.
   - Xem thống kê số lượng vé đã quét trong ca làm việc cá nhân và tại cổng được phân công.
 - **Hành động KHÔNG được phép:**
   - KHÔNG được quét vé của các sự kiện mà mình không được phân công.
@@ -149,9 +149,9 @@ graph TD
   - Hủy concert (`CANCELLED`) và kích hoạt quy trình hoàn tiền hàng loạt tự động cho 100% khách hàng.
   - Can thiệp xử lý các trường hợp tranh chấp thanh toán, giao dịch thanh toán trễ (`Late Payment Callback`) hoặc lỗi hoàn tiền từ phía ngân hàng.
   - Quản lý danh sách người dùng toàn hệ thống: Khóa tài khoản có hành vi gian lận (dùng bot, spam request, đầu cơ vé lậu).
-  - Cấu hình thông số hệ thống: Dung lượng phòng chờ, giới hạn CCU khu chọn ghế (mặc định 5.000), TTL giữ ghế (mặc định 10 phút), timeout không hoạt động (mặc định 2 phút).
-  - Xem báo cáo tổng quan tài chính toàn nền tảng, phí hoa hồng thu được, dòng tiền ký quỹ (Escrow), đối soát tổng hợp với VNPay và MoMo.
-  - Phê duyệt quyết toán và giải ngân doanh thu cho Ban tổ chức sau sự kiện.
+  - Cấu hình thông số vận hành theo baseline đã duyệt: dung lượng phòng chờ, giới hạn CCU, seat hold cố định 600 giây và queue admission timeout 120 giây; không cho phép thay đổi TTL nghiệp vụ giữ ghế.
+  - Xem báo cáo doanh thu, số dư chờ quyết toán theo sổ nội bộ, phí nền tảng theo hợp đồng và đối soát VNPay/MoMo; không coi số liệu nội bộ là xác nhận số dư tài khoản ngân hàng/escrow.
+  - Finance/Admin phê duyệt hồ sơ quyết toán và ghi nhận payout sau khi có bằng chứng chuyển tiền; hệ thống không tự động chuyển khoản theo D-034.
   - Quản lý và kiểm duyệt các đánh giá/nhận xét vi phạm thuần phong mỹ tục hoặc spam quảng cáo.
   - Xem toàn bộ Audit Log của hệ thống (lịch sử truy cập, thay đổi dữ liệu, thao tác quản trị).
 - **Hành động KHÔNG được phép (Nguyên tắc bảo vệ dữ liệu):**
@@ -202,20 +202,20 @@ graph TD
 | Đối soát giao dịch thanh toán (Reconcile) | [-] | [-] | [-] | [-] | E, R | Admin đối soát định kỳ với nhà cung cấp cổng |
 | **7. Vé điện tử & QR Code** | | | | | | |
 | Nhận vé điện tử sau thanh toán | [-] | R* | [-] | [-] | R | *Vé tự sinh ở trạng thái `ORDERED` |
-| Hiển thị Dynamic QR Code check-in | [-] | R* | [-] | [-] | [-] | *Làm mới mã mỗi 30-60 giây trên App cá nhân |
+| Hiển thị Dynamic QR Code check-in | [-] | R* | [-] | [-] | [-] | *Làm mới mã mỗi 30 giây (token có hiệu lực tối đa 60 giây) trên App cá nhân |
 | Tải vé file PDF / Nhận vé qua Email | [-] | R* | [-] | [-] | [-] | *Vé định dạng tĩnh có chữ ký bảo mật |
 | **8. Vận hành Cổng Soát Vé (Check-in)** | | | | | | |
 | Quét mã QR xác thực vé tại cổng | [-] | [-] | [-] | E* | E | *Staff chỉ quét concert và cổng được phân công |
-| Kích hoạt chế độ Offline Check-in | [-] | [-] | [-] | E* | [-] | *Tự động hoặc chủ động khi mất internet tại cổng |
+| Check-in khi scanner mất kết nối | [-] | [-] | [-] | [-] | [-] | Không có check-in offline; fail-closed và báo Gate Supervisor theo D-023 |
 | Xem báo cáo tỷ lệ check-in hiện trường | [-] | [-] | R* | R* | R | *Staff xem cổng mình; Org xem toàn bộ sự kiện |
 | **9. Hủy vé & Hoàn tiền (Refunds)** | | | | | | |
-| Gửi yêu cầu hoàn tiền cá nhân | [-] | C, E* | [-] | [-] | [-] | *Chỉ áp dụng khi gửi trước ngày diễn ra > 3 ngày |
+| Gửi yêu cầu hoàn tiền cá nhân | [-] | C, E* | [-] | [-] | [-] | *Tỷ lệ và điều kiện theo ngày lịch địa phương BR-RFD-001; chặn nếu có vé CHECKED theo BR-RFD-006 |
 | Hoàn tiền hàng loạt khi hủy concert | [-] | [-] | [-] | [-] | E* | *Admin kích hoạt tự động hoàn tiền 100% |
 | **10. Quản lý Concert & Ban tổ chức** | | | | | | |
 | Tạo hồ sơ concert mới | [-] | [-] | C* | [-] | C | *Tạo ở trạng thái `PENDING_REVIEW` |
 | Thiết kế sơ đồ ghế & Định giá vé | [-] | [-] | C, U* | [-] | U | *Chỉ sửa trước khi concert mở bán |
 | Phê duyệt / Từ chối concert | [-] | [-] | [-] | [-] | E, U | Admin cam kết SLA phê duyệt trong 48 giờ |
-| Dừng bán khẩn cấp / Hủy concert | [-] | [-] | U* | [-] | E, U | *Org gửi yêu cầu trước > 72h; Admin toàn quyền |
+| Dừng bán khẩn cấp / Hủy concert | [-] | [-] | U* | [-] | E, U | *Organizer gửi yêu cầu; Admin quyết định theo hợp đồng và chính sách khẩn cấp đã phê duyệt |
 | Phân công tài khoản Staff cho cổng | [-] | [-] | C, U, D* | [-] | U | *Organizer quản lý Staff thuộc sự kiện của mình |
 | **11. Đánh giá & Nhận xét (Reviews)** | | | | | | |
 | Xem đánh giá công khai | R | R | R | R | R | Mọi người đều có quyền xem đánh giá |
@@ -224,8 +224,8 @@ graph TD
 | Xóa đánh giá vi phạm / Kiểm duyệt | [-] | [-] | [-] | [-] | D, U | Admin kiểm duyệt từ ngữ độc hại hoặc spam |
 | **12. Báo cáo & Quyết toán tài chính** | | | | | | |
 | Xem báo cáo doanh thu & lấp đầy | [-] | [-] | R* | [-] | R | *Org chỉ xem sự kiện của mình; Admin xem toàn sàn |
-| Yêu cầu quyết toán doanh thu (Payout) | [-] | [-] | C* | [-] | [-] | *Sau khi sự kiện diễn ra thành công (`COMPLETED`) |
-| Phê duyệt giải ngân doanh thu | [-] | [-] | [-] | [-] | E, U | Admin kiểm tra đối soát trước khi giải ngân |
+| Yêu cầu quyết toán doanh thu (Payout) | [-] | [-] | C* | [-] | [-] | *Sau COMPLETED, đối soát đầy đủ và đủ điều kiện theo hợp đồng đã ký |
+| Phê duyệt/ghi nhận payout | [-] | [-] | [-] | [-] | E, U | Chỉ sau đối soát; lưu người duyệt, tham chiếu và bằng chứng chuyển tiền; điều khoản theo D-034 |
 
 ---
 
@@ -283,7 +283,7 @@ Khi người dùng đăng nhập thành công, Authentication Service cấp mộ
 
 2. **Kiểm tra Token phòng chờ độc lập (Queue Admission Guard):**
    - API chọn ghế `/api/v1/concerts/{id}/seats/hold` không chỉ kiểm tra Bearer JWT của Customer mà còn bắt buộc kiểm tra `X-Queue-Token` trong Header HTTP.
-   - Token phòng chờ được kiểm tra tính hợp lệ và thời hạn TTL 120s còn hiệu lực trên Redis Cluster trước khi cho phép tương tác ghế.
+   - Queue Access Token có TTL 120 giây tính từ heartbeat hợp lệ gần nhất; app foreground gửi heartbeat mỗi 30 giây. Token chỉ gia hạn khi heartbeat hoặc thao tác UI được xác thực; WebSocket đơn thuần không gia hạn. Thu hồi token không giải phóng seat hold 600 giây theo D-002/D-015.
 
 3. **Chống giả mạo vai trò (Privilege Escalation):**
    - API phân quyền người dùng không chấp nhận gán vai trò (`roles`) từ tham số request của client.

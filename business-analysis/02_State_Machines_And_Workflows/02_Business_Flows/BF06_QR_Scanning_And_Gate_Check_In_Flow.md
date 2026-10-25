@@ -1,8 +1,8 @@
-﻿# BF06 — Business Flow: Quét QR & Check-in Tại Cổng Sự Kiện (QR Scanning & Gate Check-in)
+# BF06 — Business Flow: Quét QR & Check-in Tại Cổng Sự Kiện (QR Scanning & Gate Check-in)
 
 ## 1. Mục Đích
 
-Tài liệu mô tả chi tiết luồng nghiệp vụ **Soát Vé Tại Cổng Sự Kiện** — bao gồm check-in online, chế độ offline dự phòng, phân quyền cổng theo phân khu và xử lý vé giả mạo.
+Tài liệu mô tả check-in online, phân quyền cổng, xử lý vé giả mạo và hành vi fail-closed khi mất kết nối theo D-023.
 
 ---
 
@@ -44,7 +44,7 @@ sequenceDiagram
         CHECKIN->>TICKET: Truy vấn ticket.status
 
         alt ticket.status = ORDERED
-            TICKET->>TICKET: UPDATE tickets\nSET status='CHECKED',\nchecked_in_at=NOW(),\nchecked_by_staff_id=staff_id,\nchecked_at_gate=gate_id
+            TICKET->>TICKET: UPDATE tickets\nSET status='CHECKED',\nchecked_in_at=SYSUTCDATETIME(),\nchecked_by_staff_id=staff_id,\nchecked_at_gate=gate_id
 
             CHECKIN-->>APP: 200 OK ✅\n{result: "VALID",\nholder_name: "NGUYEN VAN A",\nzone: "VIP_A", seat: "A12",\nchecked_in_at: "2026-10-24T19:35:22+07:00"}
 
@@ -73,54 +73,30 @@ sequenceDiagram
 
 ---
 
-## 3. Luồng Check-in Offline (Mất Kết Nối Mạng Tại Cổng)
+## 3. Mất kết nối — fail-closed
 
 ```mermaid
 sequenceDiagram
-    participant APP as Gate Staff App
-    participant LOCAL_DB as Local Encrypted Cache<br/>(SQLite on device)
-    participant API as Check-in API (Remote)
-
-    Note over APP: Phát hiện mất kết nối internet
-    APP->>APP: Chuyển sang ⚡ OFFLINE MODE\nHiển thị banner: "Đang hoạt động ngoại tuyến"
-
-    Note over APP,LOCAL_DB: Khi có kết nối lần đầu, app đã tải trước
-    Note over LOCAL_DB: Pre-downloaded data:\n- Danh sách ticket_id hợp lệ của concert\n- RSA Public Key để verify JWT\n- Danh sách ticket đã checked (sync trước)
-
-    loop Khán giả xếp hàng vào cổng (Offline Mode)
-        APP->>APP: Quét QR → Decode JWT
-        APP->>APP: Verify JWT signature bằng\nPublic Key lưu local (không cần mạng)
-
-        APP->>LOCAL_DB: SELECT FROM local_checkins\nWHERE ticket_id = scanned_ticket_id
-
-        alt Chưa check-in (offline)
-            LOCAL_DB-->>APP: Không có record
-            APP->>LOCAL_DB: INSERT INTO local_checkins\n{ticket_id, gate_id, staff_id, ts: NOW(), synced: false}
-            APP-->>Staff: ✅ HỢP LỆ (Offline Mode)\n[Hiển thị thông tin vé từ JWT payload]
-        else Đã check-in offline tại máy này
-            LOCAL_DB-->>APP: {check_time: "19:40:00", gate: "A"}
-            APP-->>Staff: ❌ ĐÃ QUÉT (Offline Mode)\n"Quét lúc 19:40 tại cổng này"
-        end
-    end
-
-    Note over APP,API: Khi có kết nối trở lại
-    APP->>API: POST /checkin/sync\nBody: {offline_checkins: [\n  {ticket_id, gate_id, staff_id, scanned_at},\n  ...\n]}
-
-    API->>API: Xử lý từng offline checkin:\n1. Verify ticket.status (lúc sync)
-    API->>API: Phát hiện conflict:\nCùng ticket_id đã checked offline ở 2 máy khác nhau
-
-    alt Conflict detected (Possible fraud)
-        API->>API: Ghi SECURITY_BREACH_DUPLICATE_ENTRY\nAlert an ninh + Organizer
-    else Không conflict
-        API->>API: Batch UPDATE tickets status = CHECKED\ncho tất cả offline checkins hợp lệ
-    end
-
-    API-->>APP: Sync kết quả:\n{synced: N, conflicts: M, failed: K}
-    APP-->>Staff: "Đã đồng bộ {N} vé. Phát hiện {M} vé cần kiểm tra."
+ actor Staff as Check-in Staff
+ participant App as Staff Scanner
+ participant API as Check-in API
+ participant DB as SQL Server
+ Staff->>App: Quét QR
+ App->>API: Gửi ticket_id, gate_id, scan_id
+ alt Server xác thực được
+  API->>DB: Transaction kiểm tra ticket ORDERED và cập nhật CHECKED
+  DB-->>API: Commit thành công
+  API-->>App: SUCCESS hoặc ALREADY_USED
+  App-->>Staff: Hiển thị kết quả đã xác thực
+ else Mất kết nối hoặc không có kết quả xác thực
+  API--xApp: Timeout / không thể xác định trạng thái
+  App-->>Staff: Lỗi kết nối; không xác nhận vé
+  Note over App,Staff: Không ghi CHECKED, không chấp nhận cache/JWT làm bằng chứng duy nhất
+  Staff->>Staff: Báo Gate Supervisor; quét lại cùng scan_id sau khi mạng phục hồi
+ end
 ```
 
----
-
+Ứng dụng không đồng bộ check-in offline. Trạng thái hiển thị phải phân biệt lỗi mạng với vé hợp lệ/không hợp lệ; chỉ server mới có thể xác nhận check-in. Retry cùng scan_id phải idempotent.
 ## 4. Phân Quyền Cổng Soát Vé (Gate Permission Management)
 
 ```mermaid
@@ -175,5 +151,5 @@ sequenceDiagram
 | QR hết hạn 60s | ⚠️ Cam: "QR HẾT HẠN — Yêu cầu khách làm mới" | Yêu cầu khách mở app refresh | BR-TCK-002 |
 | QR giả mạo (chữ ký sai) | 🔴 Đỏ đậm: "VÉ GIẢ MẠO — CẢNH BÁO AN NINH" | Giữ người lại; Gọi an ninh ngay; Không tự xử lý | BR-TCK-002 |
 | Chưa đến giờ mở cửa | ⚠️ Xám: "CHƯA ĐẾN GIỜ MỞ CỬA — [HH:mm]" | Yêu cầu khách đợi | BR-TCK-007 |
-| Mất mạng tại cổng | ⚡ Offline Mode kích hoạt tự động | Tiếp tục soát vé; Đồng bộ sau | BR-TCK-005 |
+| Mất mạng tại cổng | Scanner báo lỗi và fail-closed | Không xác nhận vé; staff báo Gate Supervisor và quét lại sau khi mạng phục hồi | BR-TCK-005 / D-023 |
 

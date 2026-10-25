@@ -1,4 +1,4 @@
-﻿# UC09 — Hủy Đơn Hàng & Yêu Cầu Hoàn Tiền (Order Cancellation & Refund Request)
+# UC09 — Hủy Đơn Hàng & Yêu Cầu Hoàn Tiền (Order Cancellation & Refund Request)
 
 ## 1. Thông Tin Chung
 
@@ -21,11 +21,44 @@ Use case này mô tả hai kịch bản hủy đơn hàng: (1) hủy đơn đang
 
 ---
 
+<!-- BEGIN MERMAID USE-CASE UC09 -->
+### Sơ đồ Use Case (Mermaid)
+
+```mermaid
+flowchart LR
+  customer["👤 Khách hàng là chủ đơn"]
+  vnpay["VNPay Gateway"]
+  momo["MoMo Gateway"]
+  subgraph SYS["Concert Ticketing System — UC09"]
+    direction TB
+    cancelPending(["Hủy đơn PENDING"])
+    requestRefund(["Yêu cầu hủy vé và hoàn tiền cho đơn PAID"])
+    check(["Kiểm tra chính sách, thời hạn và trạng thái vé"])
+    process(["Gửi yêu cầu hoàn tiền đến cổng thanh toán"])
+    result(["Cập nhật kết quả REFUNDED hoặc REFUND_FAILED"])
+  end
+  customer --- cancelPending
+  customer --- requestRefund
+  requestRefund -.->|«bao gồm»| check
+  check -.->|«nếu đủ điều kiện»| process
+  vnpay --- process
+  momo --- process
+  vnpay --- result
+  momo --- result
+  note["Đơn PENDING bị hủy và ghế được giải phóng. Customer không thể yêu cầu hoàn tiền nếu có vé CHECKED.<br/>Khách tự hủy: ≥7 ngày lịch địa phương hoàn 100%, 3–6 ngày hoàn 50%, 0–2 ngày không hoàn theo D-024. Lỗi hoàn tiền không đưa đơn về PAID."]
+  check -.-> note
+  classDef actor fill:#fff,stroke:#334155,stroke-width:1px
+  classDef provider fill:#f1f5f9,stroke:#64748b,stroke-width:1px
+  class customer actor
+  class vnpay,momo provider
+```
+<!-- END MERMAID USE-CASE UC09 -->
+
 ## 3. Điều Kiện Tiên Quyết (Preconditions)
 
 - Customer đã đăng nhập và là chủ sở hữu của đơn hàng muốn hủy.
 - Với hủy đơn PENDING: `order.status = PENDING` và `order.expires_at > now()`.
-- Với yêu cầu hoàn tiền: `order.status = PAID`; không có vé nào trong đơn đã `CHECKED`.
+- Với yêu cầu tự nguyện: order.status = PAID; concert chưa COMPLETED; không có vé nào trong đơn CHECKED; số ngày lịch theo timezone venue từ 3 trở lên.
 
 ---
 
@@ -57,13 +90,13 @@ Use case này mô tả hai kịch bản hủy đơn hàng: (1) hủy đơn đang
 
 | Bước | Actor | Hành động | Phản hồi hệ thống |
 |---|---|---|---|
-| 1 | Customer | Xem chi tiết đơn PAID → Click "Yêu cầu hủy vé / hoàn tiền" | Hệ thống tính số ngày còn lại đến ngày concert |
+| 1 | Customer | Xem chi tiết đơn PAID → Click "Yêu cầu hủy vé / hoàn tiền" | Hệ thống tính chênh lệch ngày lịch tại timezone địa điểm theo D-024 |
 | 2 | System | Kiểm tra điều kiện hợp lệ (có vé nào CHECKED? Còn đủ ngày để hoàn?) | Hiển thị màn thông báo tỷ lệ hoàn tiền áp dụng |
 | 3 | System | Hiển thị thông tin hoàn tiền | "Bạn sẽ được hoàn **X VNĐ** (Y%) về {phương thức} trong {Z ngày làm việc}. Thao tác không thể hoàn tác." |
 | 4 | Customer | Xác nhận yêu cầu | Hệ thống cập nhật và gửi lệnh hoàn tiền |
 | 5 | System | Cập nhật nguyên tử | `order → REFUND_PENDING`; tất cả `tickets → CANCELLED`; ghế → `AVAILABLE` (nếu concert ON_SALE) |
-| 6 | System | Gửi lệnh hoàn tiền đến cổng thanh toán | Cổng xác nhận nhận lệnh |
-| 7 | System | Gửi thông báo | Email + Push: "Yêu cầu hoàn tiền đã được ghi nhận. Tiền sẽ về trong {Z ngày}." |
+| 6 | System | Gửi lệnh hoàn tiền đến cổng thanh toán | Hệ thống ghi yêu cầu và trạng thái provider; timeout thành UNKNOWN, reconcile theo D-032 |
+| 7 | System | Gửi thông báo | Thông báo in-app: yêu cầu hoàn đã được ghi nhận; push/email chỉ gửi khi bật và có consent, không cam kết thời điểm tiền về. |
 
 ---
 
@@ -74,7 +107,7 @@ Use case này mô tả hai kịch bản hủy đơn hàng: (1) hủy đơn đang
 | EX-01 | Có vé trong đơn đã `CHECKED` | `422 Unprocessable: TICKET_ALREADY_CHECKED`. "Không thể hủy vé đã được sử dụng để vào sự kiện." |
 | EX-02 | Gửi yêu cầu hoàn tiền khi còn < 3 ngày đến ngày diễn | `422: REFUND_WINDOW_CLOSED`. "Đã quá thời hạn hủy vé. Chính sách không cho phép hoàn tiền trong vòng 3 ngày trước sự kiện." |
 | EX-03 | Gọi API hủy không phải chủ sở hữu đơn hàng | `403 Forbidden`. Ghi log bảo mật (IDOR attempt). |
-| EX-04 | Cổng thanh toán từ chối lệnh hoàn tiền (lần 1) | Đẩy vào Retry Queue; retry sau 24h; tối đa 3 lần; sau 3 lần thất bại → Manual Queue cho Admin |
+| EX-04 | Provider timeout hoặc không rõ kết quả hoàn | Đặt refund UNKNOWN; reconcile 30 giây, 5 phút, 30 phút; không retry mù. Chỉ retry khi thất bại xác định, tối đa 3 lần theo backoff 1/5/30 phút; sau 30 phút UNKNOWN chuyển manual queue (D-032) |
 | EX-05 | Customer gửi yêu cầu hoàn tiền 2 lần cho cùng 1 đơn | Idempotency: Hệ thống phát hiện đơn đã `REFUND_PENDING` → trả kết quả hiện tại, không tạo thêm lệnh hoàn tiền |
 
 ---
@@ -83,9 +116,9 @@ Use case này mô tả hai kịch bản hủy đơn hàng: (1) hủy đơn đang
 
 | Thời điểm gửi yêu cầu | Tỷ lệ hoàn | Số tiền hoàn (ví dụ: đơn 2.000.000đ) |
 |---|---|---|
-| Trước ngày diễn > 7 ngày | **100%** giá vé | 2.000.000 VNĐ |
-| Trước 3–7 ngày | **50%** giá vé | 1.000.000 VNĐ |
-| Trước < 3 ngày | **0%** — Không được hủy | Không áp dụng |
+| Chênh lệch ngày địa phương ≥ 7; không có vé CHECKED | **100%** subtotal vé eligible | Tính từ snapshot order, VND nguyên |
+| Chênh lệch ngày địa phương 3–6; không có vé CHECKED | **50%** subtotal vé eligible, làm tròn half-up một lần | Tính từ snapshot order, VND nguyên |
+| Chênh lệch ngày địa phương 0–2 hoặc có ticket CHECKED | **0%** — Từ chối yêu cầu tự nguyện | Không tạo refund |
 
 > **Lưu ý:** Phí dịch vụ nền tảng và phí giao dịch cổng thanh toán không được hoàn lại trong mọi trường hợp.
 
@@ -115,7 +148,7 @@ Use case này mô tả hai kịch bản hủy đơn hàng: (1) hủy đơn đang
 
 | AC | Mô tả | Loại |
 |---|---|---|
-| AC-09-02-01 | Hệ thống hiển thị chính xác số tiền sẽ được hoàn và thời gian hoàn dự kiến TRƯỚC khi customer xác nhận | Functional |
+| AC-09-02-01 | Hệ thống hiển thị chính xác số tiền đủ điều kiện hoàn trước khi customer xác nhận; nếu hiển thị thời gian xử lý thì ghi rõ đây là ước tính của provider, không phải cam kết của hệ thống | Functional |
 | AC-09-02-02 | Sau khi customer xác nhận: vé chuyển `CANCELLED`; mã QR bị vô hiệu hóa ngay lập tức (< 1 giây) | Security (Critical) |
 | AC-09-02-03 | Nếu concert còn `ON_SALE`, ghế được trả về `AVAILABLE` và xuất hiện lại trên sơ đồ để người khác mua | Functional |
 | AC-09-02-04 | Khi cổng thanh toán xác nhận hoàn tiền: `order.status → REFUNDED`; customer nhận thông báo với mã giao dịch hoàn tiền | Functional |

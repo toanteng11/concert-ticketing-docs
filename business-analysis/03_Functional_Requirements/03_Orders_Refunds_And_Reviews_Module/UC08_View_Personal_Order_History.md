@@ -20,6 +20,32 @@ Use case này cho phép khách hàng xem toàn bộ lịch sử đơn hàng, tr�
 
 ---
 
+<!-- BEGIN MERMAID USE-CASE UC08 -->
+### Sơ đồ Use Case (Mermaid)
+
+```mermaid
+flowchart LR
+  customer["👤 Khách hàng"]
+  subgraph SYS["Concert Ticketing System — UC08"]
+    direction TB
+    list(["Xem và lọc lịch sử đơn hàng"])
+    detail(["Xem chi tiết đơn và trạng thái vé"])
+    qr(["Xem vé điện tử với Dynamic QR"])
+    export(["Tải vé PDF hoặc thêm vào Wallet"])
+    cancel(["Mở UC09 hủy đơn hoặc yêu cầu hoàn tiền nếu đủ điều kiện"])
+  end
+  customer --- list
+  customer --- detail
+  detail -.->|«bao gồm»| qr
+  customer --- export
+  detail -.->|«luồng tùy chọn»| cancel
+  note["Dynamic QR làm mới mỗi 30 giây; token có thời hạn tối đa 60 giây."]
+  qr -.-> note
+  classDef actor fill:#fff,stroke:#334155,stroke-width:1px
+  class customer actor
+```
+<!-- END MERMAID USE-CASE UC08 -->
+
 ## 3. Luồng Chính (Main Flow)
 
 | Bước | Actor | Hành động | Phản hồi hệ thống |
@@ -44,7 +70,7 @@ Use case này cho phép khách hàng xem toàn bộ lịch sử đơn hàng, tr�
 | Ngày mua | Ngày giờ (múi giờ UTC+7) |
 | Số lượng vé | Ví dụ: "2 vé" |
 | Tổng tiền đã thanh toán | VNĐ |
-| Trạng thái đơn | Badge màu: PAID (xanh), PENDING (vàng), OUT_TIME (xám), REFUND_PENDING (cam), REFUNDED (xanh nhạt), CANCELLED (đỏ) |
+| Trạng thái đơn | Badge màu: PAID (xanh), PENDING (vàng), OUT_TIME (xám), REFUND_PENDING (cam), REFUND_FAILED (đỏ đậm), REFUNDED (xanh nhạt), CANCELLED (đỏ) |
 
 ### 4.2 Chi Tiết Đơn Hàng (Detail View)
 
@@ -84,7 +110,7 @@ Use case này cho phép khách hàng xem toàn bộ lịch sử đơn hàng, tr�
 
 | AC | Mô tả | Loại |
 |---|---|---|
-| AC-08-02-01 | Mã QR là Dynamic TOTP — tự làm mới mỗi 60 giây; mỗi lần làm mới có chữ ký mới | Security |
+| AC-08-02-01 | Mã QR là JWT/JWS ký RS256 — làm mới mỗi 30 giây, token có hiệu lực tối đa 60 giây; mỗi token có `nonce` và chữ ký mới | Security |
 | AC-08-02-02 | Vé `ORDERED` hiển thị đầy đủ thông tin: Tên chủ vé, Concert, Ngày giờ, Địa điểm, Zone, Ghế số, Mã QR | Functional |
 | AC-08-02-03 | Vé `CANCELLED` hiển thị dấu "ĐÃ HỦY" rõ ràng, mã QR không hiển thị hoặc bị xóa | Functional |
 | AC-08-02-04 | Có thể tải vé dạng PDF (ảnh tĩnh + QR static có chữ ký); kích thước file PDF ≤ 500KB | Functional |
@@ -99,7 +125,7 @@ Use case này cho phép khách hàng xem toàn bộ lịch sử đơn hàng, tr�
 | UC08.1 — Xem danh sách đơn hàng | Customer | — | IDOR protection bắt buộc |
 | UC08.2 — Lọc và tìm kiếm đơn hàng | Customer | — | Lọc theo status, mã đơn |
 | UC08.3 — Xem chi tiết đơn hàng | Customer | — | Xem từng ghế + lịch sử thanh toán |
-| UC08.4 — Xem vé điện tử & QR | Customer | QR Service | Dynamic QR rotate 60s |
+| UC08.4 — Xem vé điện tử & QR | Customer | QR Service | Dynamic QR rotate every 30s; token validity at most 60s |
 | UC08.5 — Tải vé PDF | Customer | PDF Generator Service | Static QR với chữ ký RSA |
 | UC08.6 — Hủy đơn (nếu hợp lệ) | Customer | — | Dẫn đến UC09 |
 

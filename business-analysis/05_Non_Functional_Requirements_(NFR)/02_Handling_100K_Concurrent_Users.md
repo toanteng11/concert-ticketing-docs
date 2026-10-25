@@ -1,14 +1,14 @@
-﻿# 02 — Xử Lý 100.000 Người Dùng Đồng Thời (Handling 100K CCU)
+# 02 — Xử Lý 100.000 Người Dùng Đồng Thời (Handling 100K CCU)
 
 ## 1. Giới Thiệu & Thách Thức Kỹ Thuật
 
 Xử lý tải $100.000$ người dùng đồng thời (**100K Concurrent Users - CCU**) trong các sự kiện mở bán vé concert quy mô lớn (Mega Flash-Sale) là bài toán kỹ thuật phức tạp nhất của nền tảng. Khi $100.000$ người cùng truy cập trong một khung giờ hẹp ($T - 15$ phút đến $T + 30$ phút), hệ thống đối mặt với 4 nguy cơ hiện hữu:
 1. **Nghẽn cổng mạng & Socket cạn kiệt (File Descriptors Exhaustion):** Hệ điều hành máy chủ hết cổng kết nối hoặc rơi vào trạng thái `TIME_WAIT`.
-2. **Sập cơ sở dữ liệu quan hệ (RDBMS Connection Throttling):** Hàng chục nghìn kết nối đồng thời vượt quá giới hạn `max_connections` của MySQL 8.0, làm treo cụm cơ sở dữ liệu.
+2. **Sập cơ sở dữ liệu quan hệ (RDBMS Connection Throttling):** Hàng chục nghìn kết nối đồng thời vượt ngân sách kết nối và làm cạn connection pool hoặc tài nguyên SQL Server, làm treo cụm cơ sở dữ liệu.
 3. **Hiệu ứng bầy đàn (Thundering Herd Problem):** Hàng trăm nghìn yêu cầu cùng ập vào một tài nguyên (ví dụ trang sơ đồ ghế VIP), gây sập tầng bộ nhớ đệm và lan sang toàn bộ hệ thống (Cascading Failure).
 4. **Bất công bằng cho người hâm mộ chân chính (Bot & Script Exploitation):** Các công cụ đầu cơ vé (Scalper Bots) có đường truyền siêu nhanh chiếm hết lượt trước người dùng bình thường nếu dùng cơ chế xếp hàng đến trước phục vụ trước (FIFO thô sơ).
 
-Tài liệu này đặc tả toàn bộ giải pháp kiến trúc và quy trình kỹ thuật để kiểm soát và điều tiết thành công lưu lượng $100.000\text{ CCU}$ với độ sẵn sàng $99.99\%$.
+Tài liệu này đặc tả toàn bộ giải pháp kiến trúc và quy trình kỹ thuật để kiểm soát và điều tiết thành công lưu lượng $100.000\text{ CCU}$ với SLO availability 99.95%/tháng cho critical first-party purchase APIs theo D-027.
 
 ---
 
@@ -16,17 +16,30 @@ Tài liệu này đặc tả toàn bộ giải pháp kiến trúc và quy trình
 
 Hệ thống bảo vệ tài nguyên lõi thông qua 4 lớp lá chắn tuần tự:
 
+<!-- BEGIN MERMAID DIAGRAM CONVERT-02_Handling_100K_Concurrent_Users -->
+### Traffic regulation layers
+
+```mermaid
+flowchart TB
+  users["Up to 100,000 CCU during flash sale"]
+  edge["Layer 1 — CDN Edge / Anycast DNS<br/>DDoS controls and static content"]
+  waiting["Waiting room<br/>pre-sale holding and random order at T0"]
+  gate["Admission control<br/>maximum 5,000 active seat-selection users"]
+  l4["Layer 2 — L4 load balancing"]
+  l7["Layer 3 — L7 Gateway<br/>TLS, JWT, rate limit, queue-token check"]
+  app["Modular Monolith application pods"]
+  state["Redis Cluster<br/>queue state and distributed seat locks"]
+  db[("SQL Server Primary<br/>transactional guard and source of truth")]
+  users --> edge --> waiting
+  waiting -->|valid access token and free slot| gate --> l4 --> l7 --> app
+  app <--> state
+  app --> db
+  note["The 95,000 waiting / 5,000 admitted split is the document's capacity scenario. Seat-hold TTL remains 600 seconds; the 120-second inactivity rule releases the queue slot, not an existing seat hold."]
+  gate -.-> note
 ```
-[100.000 CCU ngoài Internet]
-       ↓ (Lớp 1: CDN Edge & Anycast DNS - Chặn DDoS & Phân tán tài nguyên tĩnh)
-[95.000 CCU vào Phòng Chờ Ảo] ──→ [5.000 CCU được cấp quyền vào]
-       ↓ (Lớp 2: Waiting Room Service - Điều tiết van xả lưu lượng)
-[API Gateway Cụm Kubernetes]
-       ↓ (Lớp 3: Rate Limiting & Throttling - Cắt gọt tải đột biến)
-[Modular Monolith Backend & Redis Cluster]
-       ↓ (Lớp 4: Connection Pooling & DB Isolation - Bảo vệ RDBMS Master)
-[MySQL 8.0 Database]
-```
+<!-- END MERMAID DIAGRAM CONVERT-02_Handling_100K_Concurrent_Users -->
+
+
 
 ---
 
@@ -47,9 +60,9 @@ Hệ thống bảo vệ tài nguyên lõi thông qua 4 lớp lá chắn tuần t
 ### Giai Đoạn 3: Cấp Quyền Vào Khu Vực Mua Vé Theo Van Điều Tiết (Regulated Admission)
 - Hệ thống áp dụng thuật toán **Van xả điều tiết (Leaky Bucket)**:
   - Khung vực chọn ghế chỉ duy trì tối đa **$5.000\text{ CCU}$**.
-  - Cứ mỗi 30 giây, hệ thống tính toán số lượng người vừa rời đi (đã đặt vé xong hoặc bị timeout 2 phút không thao tác) để cấp quyền cho một lượng người tương ứng từ đầu hàng chờ bước vào.
+  - Cứ mỗi 30 giây, hệ thống tính toán số lượng người vừa rời đi (đã đặt vé xong hoặc không gửi heartbeat xác thực trong 120 giây) để cấp quyền slot admission cho người tiếp theo. Queue token revocation không release các seat hold đang còn TTL 600 giây.
 - Khi được phép vào, người dùng nhận được một thẻ thông hành điện tử **Queue Access Token**:
-  - Mã token được ký bằng thuật toán HMAC-SHA256 bí mật kèm thời hạn hiệu lực (TTL = 15 phút).
+  - Queue Access Token được ký HMAC-SHA256, TTL 120 giây từ hoạt động hợp lệ cuối và được gia hạn bằng heartbeat xác thực mỗi 30 giây khi trang chọn ghế foreground; WebSocket đơn thuần không gia hạn (D-015).
   - API Gateway kiểm tra tính hợp lệ của token này trên mọi request vào vùng chọn ghế và giữ ghế (`/seats/hold`). Bất kỳ ai cố vượt hàng (Bypass Queue) mà không có token hợp lệ đều bị từ chối ngay tại Gateway với mã `403 Forbidden`.
 
 ---
@@ -98,15 +111,34 @@ Khi lưu lượng truy cập vượt quá kịch bản dự kiến (ví dụ đ�
 | **Cấp độ 3: Quá tải cảnh báo** ($100.000 – 150.000\text{ CCU}$) | Cam (Overload) | Tắt toàn bộ các tính năng phụ: Gợi ý concert liên quan, bình luận đánh giá, lịch sử chi tiết; Tắt đồng bộ gợi ý tìm kiếm | Chỉ giữ lại 3 luồng sống còn: Xếp hàng, Giữ ghế, Thanh toán |
 | **Cấp độ 4: Tải cực đại (Emergency)** ($> 150.000\text{ CCU}$) | Đỏ (Shedding) | Cơ chế **Load Shedding** tại Gateway: Từ chối tiếp nhận thêm người mới vào phòng chờ; Trả về trang tĩnh thông báo: *"Hệ thống đang phục vụ tối đa lượt khách, vui lòng thử lại sau 15 phút"* | Bảo vệ $100\%$ những người dùng đã vào trong phòng mua không bị văng ra ngoài |
 
+<!-- BEGIN MERMAID DIAGRAM NFR-DEGRADE -->
+### Chế độ phục vụ theo mức tải
+
+```mermaid
+flowchart TD
+  load{"Observed concurrent users"}
+  normal["Normal<br/>below 50,000 CCU<br/>all baseline features"]
+  peak["Peak sale<br/>50,000–100,000 CCU<br/>queue enabled; polling 5s; reduce Debug logs"]
+  overload["Overload warning<br/>100,000–150,000 CCU<br/>disable recommendations, reviews, detailed history, search suggestions"]
+  emergency["Emergency shedding<br/>above 150,000 CCU<br/>stop admitting new queue users; static retry page"]
+  protected["Keep already admitted buyers on<br/>queue, seat hold, payment paths"]
+  load -->|below 50k| normal
+  load -->|50k–100k| peak
+  load -->|100k–150k| overload
+  load -->|above 150k| emergency --> protected
+```
+<!-- END MERMAID DIAGRAM NFR-DEGRADE -->
+
+
 ---
 
 ## 6. Bảo Vệ Tầng Cơ Sở Dữ Liệu Cốt Lõi (Database Protection Strategies)
 
-Để đảm bảo MySQL 8.0 Master không bao giờ bị nghẽn trong lúc mở bán:
+Để đảm bảo SQL Server Primary không bao giờ bị nghẽn trong lúc mở bán:
 1. **Phân Tách Đọc / Ghi Tuyệt Đối (Read/Write Splitting):**
-   - $100\%$ truy vấn tìm kiếm, xem danh mục concert, xem thông tin nghệ sĩ được chuyển hướng tới 2 cụm Read Replica hoặc Redis Cache.
-   - Database Master chỉ phục vụ duy nhất 2 thao tác ghi giao dịch: Tạo bản ghi giữ ghế (`INSERT INTO seat_holds`) và Tạo đơn hàng (`INSERT INTO orders`).
-2. **Gom Nhóm Kết Nối Bằng HikariCP / ProxySQL (Connection Pooling):**
-   - Không cho phép hàng chục Pods kết nối trực tiếp vào MySQL 8.0.
-   - Triển khai HikariCP / ProxySQL theo cơ chế **Transaction Pooling**: Hơn $10.000$ kết nối từ các client được ghép vào một nhóm nhỏ chỉ gồm $150 – 200$ kết nối thực tế tới MySQL 8.0 Server. Nhờ đó, Database CPU không bị lãng phí vào việc cấp phát bộ nhớ ngữ cảnh phiên (Process Context Switching).
+   - Truy vấn đọc chỉ dùng readable secondary khi consistency policy cho phép; mọi read-your-write trong 5 giây sau thao tác ghi đi Primary (D-013). Read/write routing dùng topology D-026; read-your-write luôn về Primary.
+   - SQL Server Primary phục vụ toàn bộ thao tác ghi giao dịch: cập nhật trạng thái ghế/hold, tạo và cập nhật order/order_items, payment/refund, phát hành ticket, hủy và audit. Mọi sizing TPS phải tính đủ các ghi phát sinh trên cùng luồng; benchmark 100.000 CCU và sign-off sizing/licensing là release gate D-030.
+2. **Gom Nhóm Kết Nối Bằng HikariCP (Connection Pooling):**
+   - Không cho phép hàng chục Pods kết nối trực tiếp vào SQL Server.
+   - Mỗi JVM dùng HikariCP với pool ghi/đọc riêng; giới hạn được đặt theo ngân sách kết nối SQL Server tổng hợp trên toàn bộ app/worker instances. HikariCP không phải proxy pooler dùng chung và không được xem là transaction pooling. Kích thước pool phải được xác nhận bằng benchmark production-like trước go-live (D-030).
 

@@ -20,6 +20,32 @@ Use case này cho phép Admin quản lý toàn bộ tài khoản người dùng 
 
 ---
 
+<!-- BEGIN MERMAID USE-CASE UC03 -->
+### Sơ đồ Use Case (Mermaid)
+
+```mermaid
+flowchart LR
+  admin["👤 Admin (đã xác thực 2FA)"]
+  subgraph SYS["Concert Ticketing System — UC03"]
+    direction TB
+    search(["Tìm kiếm và xem tài khoản"])
+    investigate(["Điều tra lịch sử và cờ bảo mật"])
+    lock(["Khóa hoặc mở khóa tài khoản"])
+    role(["Cấp hoặc thu hồi quyền Organizer"])
+    audit(["Ghi audit log cho thao tác quản trị"])
+  end
+  admin --- search
+  search -.->|«bao gồm»| investigate
+  admin --- lock
+  lock -.->|«bao gồm»| audit
+  admin --- role
+  role -.->|«bao gồm»| audit
+  search -.->|«bao gồm»| audit
+  classDef actor fill:#fff,stroke:#334155,stroke-width:1px
+  class admin actor
+```
+<!-- END MERMAID USE-CASE UC03 -->
+
 ## 3. User Stories & Acceptance Criteria
 
 ### US-03-01: Tìm Kiếm & Xem Thông Tin Tài Khoản

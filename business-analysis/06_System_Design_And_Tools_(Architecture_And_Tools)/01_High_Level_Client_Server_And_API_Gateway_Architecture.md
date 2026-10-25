@@ -1,126 +1,239 @@
-﻿# 01 — Kiến Trúc Tổng Thể Client-Server & API Gateway (High-Level Architecture)
+# 01 — Kiến Trúc Tổng Thể Client-Server & Load Balancer (High-Level Architecture)
 
 ## 1. Giới Thiệu & Mục Đích Tài Liệu
 
-Tài liệu này đặc tả kiến trúc tổng thể cấp cao (**High-Level System Architecture**) của nền tảng bán vé sự kiện âm nhạc quy mô lớn theo mô hình **Modular Monolith**. Tài liệu cung cấp toàn bộ các thành phần, các lớp kiến trúc (Architectural Layers), biên giới mạng, cơ chế tiếp nhận lưu lượng và đường đi của dữ liệu qua từng tầng để làm cơ sở cho kỹ sư hệ thống vẽ sơ đồ kiến trúc tổng thể (**High-Level Architecture Diagram**) và sơ đồ luồng dữ liệu (**Data Flow Diagram**).
+Tài liệu này đặc tả kiến trúc tổng thể cấp cao (**High-Level System Architecture**) của nền tảng bán vé sự kiện âm nhạc quy mô lớn. Kiến trúc được thiết kế theo chuẩn **System Design Primer**: tách biệt luồng Read / Write / Async Queue, sử dụng Redis Cache & Lock, SQL Server Primary / Readable Secondary và hàng chờ tin nhắn (Message Queue) cho xử lý bất đồng bộ.
 
-> **Ghi chú kiến trúc:** Hệ thống backend là một ứng dụng **Spring Boot Modular Monolith** duy nhất — không phải tập hợp các Microservices riêng lẻ. Toàn bộ 10 module nghiệp vụ (Auth, Queue, Concert, Booking, Order, Payment, Ticket, Review, Notification, Reporting) được đóng gói trong một Docker container duy nhất và giao tiếp nội bộ qua lời gọi hàm trong JVM.
+Tài liệu cung cấp toàn bộ các thành phần, các lớp kiến trúc (Architectural Layers), biên giới mạng, cơ chế tiếp nhận lưu lượng và đường đi của dữ liệu qua từng tầng để làm cơ sở cho kỹ sư hệ thống vẽ sơ đồ kiến trúc tổng thể (**High-Level Architecture Diagram**) và sơ đồ luồng dữ liệu (**Data Flow Diagram**).
+
+> **Ghi chú kiến trúc:** Backend được tổ chức theo mô hình **Modular Monolith** (Spring Boot 3) — nhưng bổ sung **RabbitMQ message broker** và **Worker Service** độc lập để xử lý các tác vụ bất đồng bộ nặng (gửi email, hoàn tiền tự động, hủy đơn trễ). Đây là mô hình **Hybrid: Modular Monolith + Lightweight Async Workers**.
 
 ---
 
 ## 2. Phân Tầng Kiến Trúc Hệ Thống (Layered Architecture Breakdown)
 
-Hệ thống được tổ chức thành 6 tầng kiến trúc vật lý và logic phân tách rõ ràng:
+> **Kiến trúc mục tiêu theo sơ đồ:** Modular Monolith Spring Boot scale ngang; Write API/Read API tách theo luồng; HikariCP write pool tới SQL Server Primary và read-intent pool tới readable synchronous secondary trong Always On AG theo D-026; Redis giữ queue access token tối đa 120 giây, seat hold 600 giây và cache TTL theo data class; RabbitMQ theo D-025 cùng worker; SQL Server là nguồn sự thật cho audit/outbox, không có NoSQL theo D-029. Read-your-write đi Primary tối đa 5 giây; cache TTL không thay thế định tuyến nhất quán. Check-in online-only, fail-closed theo D-023.
 
-### Tầng 1: Tầng Ứng Dụng Khách (Client & Presentation Layer)
-- **Web Portal (Khách hàng & Ban tổ chức):** Ứng dụng Single Page Application (SPA) phát triển bằng React / Next.js hoặc Vue.js, tối ưu hóa SEO và tải trang tức thì.
-- **Mobile Native Application (iOS & Android):** Ứng dụng di động phát triển bằng Flutter hoặc React Native, tích hợp Dynamic QR Token Generator và Push Notification Native (APNs / FCM).
-- **Staff Check-in Scanner App:** Ứng dụng chuyên dụng cho nhân viên soát vé tại cổng với camera quét tốc độ cao và cơ chế lưu trữ đệm SQLite cục bộ khi mất mạng.
-- **Admin Management Portal:** Giao diện quản trị hệ thống tập trung dành cho Quản trị viên sàn.
+Hệ thống được tổ chức thành **8 tầng kiến trúc** phân tách rõ ràng theo sơ đồ kiến trúc mục tiêu:
 
-### Tầng 2: Tầng Mạng Biên & Phòng Thủ Tuyến Đầu (Edge CDN & WAF Layer)
-- **DNS Anycast Toàn cầu:** Phân giải tên miền độ trễ thấp và chuyển hướng lưu lượng thông minh.
-- **Cloudflare Enterprise WAF & DDoS Shield:** Hấp thụ các cuộc tấn công từ chối dịch vụ (DDoS Lớp 3/4/7) lên tới hàng Terabit/giây; kiểm tra chứng chỉ SSL/TLS 1.3 tại biên mạng.
-- **Edge CDN Caching:** Lưu trữ và phân phối tài nguyên tĩnh (JS, CSS, hình ảnh, sơ đồ ghế SVG) gần người dùng nhất tại các PoP (Hà Nội, TP.HCM, Đà Nẵng).
+<!-- BEGIN MERMAID DIAGRAM CONVERT-01_High_Level_Client_Server_And_API_Gateway_Architecture -->
+### Architecture overview
 
-### Tầng 3: Tầng Cổng Giao Tiếp Ứng Dụng (API Gateway & Ingress Layer)
-- **Công nghệ cốt lõi:** Kong Gateway hoặc Nginx Reverse Proxy (trên Docker Compose / Kubernetes).
-- **Chức năng tập trung:**
-  - Giải mã SSL (TLS Termination) tập trung.
-  - Xác thực chữ ký số JWT và kiểm tra cờ thu hồi phiên (Token Revocation Check via Redis Blacklist).
-  - Kiểm tra thẻ thông hành phòng chờ ảo (Virtual Queue Access Token).
-  - Giới hạn tần suất gọi API (Rate Limiting & IP Throttling — dựa trên Redis Counter).
-  - Chèn mã theo dõi (`X-Correlation-ID`) vào mọi request.
-  - Định tuyến toàn bộ traffic tới **một endpoint duy nhất** của ứng dụng Modular Monolith.
+```mermaid
+flowchart TB
+  subgraph CLIENTS["Client layer"]
+    web["Web app"]
+    mobile["iOS / Android app"]
+    staff["Staff QR scanner"]
+    admin["Admin / Organizer portal"]
+  end
+  dns["DNS + CDN<br/>Static assets and public cache"]
+  lb["Load balancer / API Gateway<br/>TLS, routing, rate limits, WebSocket"]
+  subgraph APP["Concert Ticketing System — Spring Boot 3 Modular Monolith, scaled horizontally"]
+    read["Read APIs<br/>Catalog, seat map, reports"]
+    write["Write APIs<br/>Booking, orders, payments, check-in"]
+    producer["Event producers<br/>Notifications, cancellation work"]
+  end
+  redis["Redis Cluster<br/>Queue session 120s; seat lock 600s; cache"]
+  sqlw[("SQL Server Primary<br/>Transactional source of truth")]
+  sqlr[("Readable synchronous secondary<br/>Always On AG per D-026")]
+  broker["Message broker<br/>RabbitMQ baseline D-025; retry + DLQ"]
+  worker["Separate Worker process<br/>notifications, refunds, timeout jobs"]
+  object["Object Storage<br/>assets and generated files"]
+  payments["VNPay / MoMo"]
+  channels["Email / Push / SMS providers"]
+  web --> dns
+  mobile --> dns
+  staff --> dns
+  admin --> dns
+  dns --> lb
+  dns -.->|static origin| object
+  lb --> read
+  lb --> write
+  read --> redis
+  read --> sqlr
+  read --> sqlw
+  write <--> redis
+  write --> sqlw
+  write <--> payments
+  payments -->|signed callback| lb
+  write --> producer
+  producer --> broker
+  broker --> worker
+  worker --> sqlw
+  worker <--> payments
+  worker --> channels
+  note["Read-after-write requests route to Primary for up to 5s (D-013). Queue token expires after 120s without authenticated activity; admission slot is released but seat hold remains for 600s (D-002/D-015). NoSQL is excluded from baseline by D-029."]
+  read -.-> note
+```
+<!-- END MERMAID DIAGRAM CONVERT-01_High_Level_Client_Server_And_API_Gateway_Architecture -->
 
-### Tầng 4: Tầng Ứng Dụng Monolith (Modular Monolith Application Layer)
-- **Một ứng dụng Spring Boot 3 duy nhất** chứa 10 module nghiệp vụ:
-  - `auth` — Xác thực & Tài khoản
-  - `queue` — Phòng Chờ Ảo
-  - `concert` — Danh Mục Sự Kiện
-  - `booking` — Đặt Ghế & Giữ Ghế
-  - `order` — Quản Lý Đơn Hàng
-  - `payment` — Thanh Toán & Đối Soát
-  - `ticket` — Phát Hành Vé & Soát Vé
-  - `review` — Đánh Giá & Bình Luận
-  - `notification` — Gửi Thông Báo Đa Kênh (Async)
-  - `reporting` — Báo Cáo & Phân Tích
-- Tất cả module chạy trong **một JVM duy nhất**, giao tiếp qua lời gọi hàm trực tiếp.
-- Triển khai dưới dạng **1 Docker container** (port 8080).
 
-### Tầng 5: Tầng Bộ Đệm Nóng & Khóa Phân Tán (In-Memory Caching & Locking Layer)
-- **Redis Cluster (3 nodes):** Chịu trách nhiệm cho các tác vụ đòi hỏi tốc độ cực cao:
-  - Hàng chờ ảo (Sorted Sets).
-  - Khóa giữ ghế phân tán (`SETNX EX 600`).
-  - Bộ đếm Rate Limit (INCR + EXPIRE).
-  - Cache danh mục concert và Blacklist JWT Token.
-
-### Tầng 6: Tầng Lưu Trữ Bền Vững (Persistence & Storage Layer)
-- **Cơ sở dữ liệu Giao dịch (MySQL 8.0 HA):** 1 Primary + 2 Read Replicas (InnoDB Engine) kết hợp HikariCP Connection Pooling (pool-size: 50). Toàn bộ 10 module dùng chung một database instance — mỗi module sở hữu bộ bảng riêng.
-- **Kho Lưu Trữ Đối Tượng (AWS S3 / MinIO):** Lưu ảnh poster, sơ đồ ghế gốc, hóa đơn PDF, tệp xuất báo cáo lớn.
-- **Công Cụ Tìm Kiếm (OpenSearch):** Phục vụ tìm kiếm concert toàn văn (Full-Text Search) và lưu trữ nhật ký kiểm toán (Audit Logs).
 
 ---
 
-## 3. Đường Đi Của Yêu Cầu & Vòng Đời Dữ Liệu (Request Lifecycle & Data Flow)
+## 3. Mô Tả Chi Tiết Từng Tầng
 
-### Kịch Bản Trọng Điểm: Người Dùng Mua Vé Concert Trong Giờ Cao Điểm
+### Tầng 1: Client & Presentation Layer
+- **Web Portal (SPA):** React / Next.js — tối ưu SEO, tải tức thì.
+- **Mobile App (iOS & Android):** Flutter / React Native — QR Token Generator, Push Notification (APNs/FCM).
+- **Staff QR Scanner App:** Ứng dụng soát vé trực tuyến; fail-closed khi không kết nối được Check-in Service theo D-023.
+- **Admin Management Portal:** Giao diện quản trị tập trung cho Quản trị viên sàn.
 
-| Giai đoạn | Điểm chạm (Touchpoint) | Hành động xử lý | Dữ liệu trao đổi |
+### Tầng 2: DNS & CDN Layer
+- **Cloudflare Anycast DNS:** Phân giải tên miền độ trễ thấp, chuyển hướng thông minh theo vùng địa lý.
+- **Cloudflare / CloudFront CDN:** Cache và phân phối tài nguyên tĩnh (Poster concert, Banner sự kiện, Sơ đồ ghế SVG) tại các PoP Hà Nội / TP.HCM / Đà Nẵng. Tải từ CDN < 20ms.
+- **Kết nối CDN → Object Store (S3/R2):** Pull-through cache — file không có trong Edge thì kéo từ Origin S3.
+
+### Tầng 3: Load Balancer Layer
+- **Công nghệ:** Nginx (Docker / Kubernetes Ingress).
+- **Chức năng:**
+  - Phân phối traffic đến nhiều instance Monolith (Round-Robin / Least-Connection).
+  - Rate Limiting sơ cấp tại tầng L4/L7 cho các endpoint nhạy cảm (`/login`, `/orders`, `/seats/hold`).
+  - Health-check các instance — loại bỏ instance lỗi khỏi pool tự động.
+  - Hỗ trợ WebSocket Upgrade (sticky session cho WSS connections).
+  - SSL/TLS Termination (forward HTTP nội bộ).
+
+### Tầng 4: Modular Monolith Application Layer (Spring Boot 3)
+
+Một ứng dụng Spring Boot 3 chứa 4 nhóm endpoint phân tách rõ ràng theo luồng xử lý:
+
+#### 4.1. Web Server / Auth Module
+- **Vai trò:** Điểm tiếp nhận request, xác thực và điều tiết lưu lượng vào.
+- **Chức năng:**
+  - JWT RS256 Authentication & OAuth2 Social Login.
+  - RBAC — kiểm tra vai trò (Customer / Organizer / Admin / Staff) trên mọi request.
+  - **Phòng Chờ Ảo (Virtual Queue):** Giới hạn tối đa **5.000 CCU** vào khu vực chọn ghế tại một thời điểm. Những người còn lại đứng trong hàng chờ Redis (Sorted Set).
+
+#### 4.2. Write API Module (Đồng bộ — Critical Path)
+- **Vai trò:** Xử lý các thao tác ghi giao dịch nhạy cảm, đòi hỏi tính nhất quán tức thì (ACID).
+- **Chức năng:**
+  - Giữ ghế (tối đa 4 ghế/lần) — `SETNX EX 600` Redis + `INSERT seat_holds` SQL Server.
+  - Tạo đơn hàng (`INSERT orders + order_items`).
+  - Khởi tạo thanh toán — redirect URL tới VNPay/MoMo.
+  - Nhận IPN Webhook từ cổng thanh toán — xác minh Idempotency Key, cập nhật trạng thái.
+  - Soát vé QR tại cổng check-in.
+- **Kết nối:** Redis (SET NX EX), SQL Server Primary, VNPay/MoMo (HTTP webhook).
+
+#### 4.3. Write API Async Module (Bất đồng bộ — Non-Critical)
+- **Vai trò:** Khởi tạo các tác vụ bất đồng bộ không cần kết quả tức thì.
+- **Chức năng:**
+  - Phát sự kiện gửi thông báo (Email / Push / In-App) lên **Message Queue**.
+  - Phát sự kiện hủy đơn hàng (khi timeout thanh toán 10 phút).
+  - Phát sự kiện hoàn tiền tự động (khi concert bị hủy bởi Admin).
+- **Kết nối:** → RabbitMQ (Producer).
+
+#### 4.4. Read API Module (Chỉ đọc)
+- **Vai trò:** Phục vụ toàn bộ truy vấn đọc — không ghi vào DB.
+- **Chức năng:**
+  - Xem / Lọc / Tìm kiếm concert.
+  - Xem sơ đồ ghế và trạng thái ghế real-time.
+  - Xem lịch sử đơn hàng cá nhân.
+  - Xem báo cáo doanh thu (Organizer / Admin).
+- **Kết nối:** Redis (GET cache concert, seat map) → SQL Server Readable Secondaries → Object Store (Signed URL).
+
+### Tầng 5: Message Queue & Worker Layer
+
+#### 5.1. Message Queue (RabbitMQ)
+- **Công nghệ:** RabbitMQ; durable queues, publisher confirms, retry/DLQ, idempotent consumer; transactional outbox trong SQL Server (D-025/D-029).
+- **Tính năng quan trọng:**
+  - **Retry Policy:** Tự động retry 3 lần với exponential backoff khi Worker xử lý thất bại.
+  - **Dead-Letter Queue (DLQ):** Message thất bại sau 3 lần retry → chuyển sang DLQ để team kỹ thuật kiểm tra thủ công.
+- **RabbitMQ exchanges / queues chính:**
+  - `notification.send` — Gửi Email, Push, In-App.
+  - `order.cancel` — Hủy đơn hàng timeout.
+  - `refund.process` — Hoàn tiền tự động.
+
+#### 5.2. Worker Service (Process riêng biệt)
+- **Công nghệ:** Spring Boot Worker (riêng biệt với Monolith app) hoặc Spring Boot Scheduler.
+- **Vai trò:** Consumer — lắng nghe Queue và xử lý từng message:
+  - **Gửi Email / In-App Notification:** Gọi SendGrid / AWS SES / FCM.
+  - **Xử lý Hoàn Tiền Tự Động:** Gọi VNPay Refund API / MoMo Refund API → cập nhật `refunds` vào SQL Server.
+- **Lý do tách Worker riêng (không dùng @Async trong Monolith):**
+  - Worker có thể scale độc lập mà không cần restart toàn bộ Monolith.
+  - Failure trong Worker không ảnh hưởng đến luồng mua vé chính.
+  - Dễ monitor hàng đợi và bottleneck riêng biệt.
+
+### Tầng 6: Redis Cache & Distributed Lock Layer
+
+| Mục đích | Key Pattern | TTL | Chi tiết |
 |---|---|---|---|
-| **1. Truy cập ban đầu** | Client → Cloudflare Edge | Tải mã nguồn ứng dụng Web/App; kiểm tra bot qua Turnstile CAPTCHA | Nhận HTML, CSS, JS Bundle từ Edge Cache (< 20 ms) |
-| **2. Xếp hàng chờ ảo** | Client → API Gateway → `queue` Module | Kiểm tra thời gian mở bán; cấp số thứ tự ngẫu nhiên trong Redis Sorted Set | Client nhận số thứ tự và bắt đầu polling trạng thái |
-| **3. Cấp quyền vào chọn ghế** | `queue` Module → Client | Đến lượt người dùng; cấp thẻ `queue_token` có chữ ký điện tử HMAC | Client nhận `queue_token` (hiệu lực 15 phút) |
-| **4. Xem sơ đồ ghế** | Client → `booking` Module → Redis/MySQL | Tải cấu trúc khán đài và trạng thái ghế trống/đang giữ/đã bán | Nhận JSON trạng thái ghế (từ Redis cache hoặc MySQL) |
-| **5. Giữ ghế (Hold Seat)** | Client → API Gateway → `booking` Module → Redis | Thực thi `SETNX EX 600` khóa ghế; ghi bản ghi `seat_holds` vào MySQL (cùng @Transactional) | Giữ ghế thành công; phát WebSocket đổi màu ghế sang Vàng |
-| **6. Đặt hàng & Thanh toán** | Client → `order` Module → `payment` Module → VNPay | Kiểm tra khóa giữ ghế còn hạn; tạo đơn PENDING; khởi tạo giao dịch; chuyển hướng sang cổng thanh toán | Nhận URL thanh toán VNPay kèm mã giao dịch |
-| **7. Xác nhận giao dịch** | VNPay → API Gateway → `payment` Module (IPN) | Cổng thanh toán gọi IPN callback; xác minh chữ ký SHA256; cập nhật Payment→Order→Ticket trong 1 @Transactional | Cập nhật đơn PAID, ghế SOLD, phát hành vé QR |
-| **8. Thông báo & Báo cáo** | `payment` Module → PaymentSuccessEvent → `notification` Module (@Async) | Sinh mã Dynamic QR vé điện tử; gửi Email xác nhận kèm PDF; gửi Push Notification (bất đồng bộ) | Khách hàng nhận email vé; vé hiển thị trên ứng dụng di động |
+| **Virtual Queue** | `queue:{concertId}` (Sorted Set) | Đến hết giờ mở bán | ZADD score=timestamp — xếp hàng ngẫu nhiên |
+| **Seat Lock** | `seat:lock:{seatId}` | 600 giây (10 phút) | `SET NX EX 600` — atomic; TTL 600 giây theo D-002 |
+| **Session Timeout Queue** | `queue:timeout:{userId}` | 120 giây (2 phút) | Hết hạn phiên → thu hồi queue slot; seat hold đã tạo tiếp tục theo TTL 600 giây (D-002) |
+| **Concert Cache** | `concert:{id}` (Hash) | 300 giây (5 phút) | Giảm load SQL Server khi browse concert |
+| **JWT Blacklist** | `jwt:blacklist:{jti}` | TTL còn lại của token | Logout → revoke token tức thì |
+| **Rate Limit Counter** | `ratelimit:{ip}:{minute}` | 60 giây | INCR + EXPIRE — > ngưỡng → 429 |
+
+### Tầng 7: Data Layer
+
+Sau thao tác ghi, read-your-write được route về Primary tối đa 5 giây (D-013). Readable secondary, listener routing và HA phụ thuộc edition/topology D-026; read-only annotation không tự route kết nối.
+
+#### 7.1. Audit, transactional outbox và operational logs
+- SQL Server lưu audit_logs và outbox_events; outbox row được ghi cùng transaction nghiệp vụ và publish tới RabbitMQ với publisher confirm.
+- Redis chỉ lưu queue/lock/cache có TTL; không lưu transaction truth.
+- ELK/OpenSearch lưu operational logs đã lọc PII theo retention NFR; không dùng để đối soát giao dịch.
+
+#### 7.2. SQL Server Primary (Ghi dữ liệu giao dịch)
+- **Vai trò:** Primary server — tiếp nhận toàn bộ write operations.
+- **Nguồn schema:** [ERD SQL Server](<03_ERD_And_Database_Schema_Design.md>); các index minh họa dưới đây phải khớp tên cột trong ERD trước khi thành migration.
+- **Tính năng ACID:**
+  - Spring @Transactional bao các thay đổi ACID trong SQL Server; Redis lock nằm ngoài DB transaction và cần compensation/reconciliation khi lỗi.
+  - Unique constraints trên `orders.idempotency_key` và `orders.hold_token` — chống replay tạo đơn và bảo đảm một order cho mỗi hold group.
+  - `SELECT ... WITH (UPDLOCK, ROWLOCK) trong transaction` — row-level lock khi cần kiểm tra và cập nhật trạng thái ghế.
+  - Optimistic Locking (`@Version`) — chống concurrent update conflict trên entity.
+- **Quản lý bảng lịch sử quy mô lớn:** audit_logs, checkin_logs, notifications dùng index, retention và archival; không physical partition trong baseline (D-028).
+
+#### 7.3. SQL Server Readable Secondaries (Đọc báo cáo & Tìm kiếm)
+- **Vai trò:** Readable synchronous secondary cùng region và asynchronous DR replica khác region theo SQL Server 2025 Enterprise Always On AG D-026.
+- **Phân tách đọc trong Spring Boot:**
+  ```java
+  @Transactional(readOnly = true)  // routing layer chọn secondary nếu đủ điều kiện; D-013 giữ Primary sau write
+  public Page<ConcertDto> searchConcerts(...) { ... }
+  ```
+- **Phục vụ:** Xem concert, lịch sử đơn hàng, báo cáo doanh thu, thống kê ghế.
+
+#### 7.4. Phân Vùng Theo Domain (SQL Server Logical Grouping)
+Các bảng được phân nhóm theo domain trong cùng SQL Server instance:
+
+| Nhóm | Bảng | Chiến lược Index |
+|---|---|---|
+| **Users & Auth** | `users`, `user_credentials`, `user_sessions` | Index (`email`), Index (`phone`) |
+| **Orders** | `orders`, `order_items` (voucher không có trong baseline D-031) | Composite Index (`user_id`, `created_at DESC`) |
+| **Concerts & Seats** | `concerts`, `venues`, `ticket_zones`, `seats`, `seat_holds` | Index (`concert_id`, `seat_id`), Index (`concert_id`, `status`) |
+| **Historical tables** | audit_logs, checkin_logs, notifications | index + retention/archive; no partition in baseline (D-028) |
+
+#### 7.5. Object Store (S3 / Cloudflare R2)
+- Lưu: Poster concert, Banner sự kiện, File vé PDF, Sơ đồ ghế gốc SVG.
+- **Signed URL (TTL=15 phút):** Client không truy cập trực tiếp S3 — phải xin URL có chữ ký từ server.
 
 ---
 
-## 4. Đặc Tả Chi Tiết Quy Trình Xử Lý Tại API Gateway (Pipeline Execution)
+## 4. Đường Đi Của Yêu Cầu (Request Lifecycle)
 
-Mọi yêu cầu HTTP/RESTful từ phía máy khách khi đi qua API Gateway đều phải trải qua 6 bước xử lý tuần tự:
+### Kịch Bản: Đặt Vé Trong Giờ Cao Điểm
 
-1. **Correlation ID Filter:** Kiểm tra tiêu đề `X-Request-ID`. Nếu chưa có, Gateway tự động sinh mã UUID v4 mới và đính kèm vào ngữ cảnh để theo vết xuyên suốt các module trong ứng dụng Monolith.
-2. **CORS & Security Headers Filter:** Thêm các tiêu đề bảo mật: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Strict-Transport-Security: max-age=31536000`.
-3. **Rate Limiting Filter:** Tra cứu bộ đếm IP/User trong Redis. Nếu vượt quá ngưỡng (> 120 req/phút) → Trả về mã lỗi `429 Too Many Requests` ngay tại Gateway mà không gọi vào ứng dụng Backend.
-4. **Authentication & Queue Token Filter:**
-   - Với các API công khai (`/api/v1/concerts`): Cho phép đi qua trực tiếp.
-   - Với các API bảo vệ (`/api/v1/users/me`, `/orders`): Giải mã và kiểm tra hạn dùng của Access Token JWT (kiểm tra Redis Blacklist).
-   - Với API giữ ghế (`/api/v1/seats/hold`): Kiểm tra thêm tiêu đề `X-Queue-Token` đảm bảo khách đã qua phòng chờ hợp lệ.
-5. **Routing Filter:** Định tuyến toàn bộ request tới **một instance duy nhất** của ứng dụng Spring Boot Monolith (port 8080). Trong trường hợp Scale-Out (nhiều instance), Load Balancer phân phối theo Round-Robin/Least-Connection.
-6. **Access Logging & Metrics Filter:** Ghi nhận mã trạng thái phản hồi, thời gian xử lý (latency), kích thước gói tin và xuất ra Prometheus Metrics / FluentBit.
+| Giai đoạn | Luồng | Công nghệ |
+|---|---|---|
+| **1. Truy cập** | Client → CDN (< 20ms) | Cloudflare Edge Cache |
+| **2. Phân giải** | Client → DNS → Load Balancer | Cloudflare Anycast + Nginx |
+| **3. Xếp hàng** | Load Balancer → Auth/Queue Module → Redis | ZADD Sorted Set + Queue Token |
+| **4. Xem ghế** | Read API → Redis Cache / readable secondary; Primary trong cửa sổ read-your-write | GET concert:{id} / SELECT seats |
+| **5. Giữ ghế** | Write API → Redis (SETNX) + SQL Server Write | Atomic lock + INSERT seat_holds |
+| **6. Tạo đơn** | Write API → SQL Server Primary (@Transactional) | INSERT orders + order_items |
+| **7. Thanh toán** | Write API ↔ VNPay/MoMo | Redirect + IPN Webhook verify |
+| **8. Xác nhận** | Write API → SQL Server Primary (UPDATE PAID) | UPDATE orders + INSERT tickets |
+| **9. Thông báo** | Write Async → Queue → Worker → Email/Push | RabbitMQ theo D-025 → Worker → SendGrid/FCM |
 
 ---
 
-## 5. Sơ Đồ Kiến Trúc Tổng Thể (Để Vẽ Trong Astah)
+## 5. Kiến Trúc Tổng Thể Mục Tiêu
 
-```
-[Clients: Web SPA / Mobile App / Staff Check-in App / Admin Portal]
-                        |
-              [Cloudflare WAF + CDN]
-                        |
-              [Kong API Gateway / Nginx]
-           (Rate Limit | JWT Auth | Queue Token | Correlation ID)
-                        |
-    ┌───────────────────────────────────────────────────────┐
-    │          SPRING BOOT MODULAR MONOLITH (Port 8080)     │
-    │  ┌──────┐ ┌───────┐ ┌─────────┐ ┌─────────┐          │
-    │  │ auth │ │ queue │ │ concert │ │ booking │          │
-    │  └──────┘ └───────┘ └─────────┘ └─────────┘          │
-    │  ┌───────┐ ┌─────────┐ ┌────────┐ ┌────────┐         │
-    │  │ order │ │ payment │ │ ticket │ │ review │         │
-    │  └───────┘ └─────────┘ └────────┘ └────────┘         │
-    │  ┌──────────────┐ ┌───────────┐                       │
-    │  │ notification │ │ reporting │  (10 Modules)         │
-    │  └──────────────┘ └───────────┘                       │
-    └───────────────────────────────────────────────────────┘
-              |                         |
-    [Redis Cluster]              [MySQL 8.0 HA Cluster]
-    (Queue, Locks,               (1 Primary + 2 Replicas)
-     Cache, Rate Limit)
-              |
-    [MinIO/S3 Object Storage]  [OpenSearch (Full-Text + Audit)]
-```
+Luồng chính: ứng dụng web/di động → CDN/WAF → Load Balancer/API Gateway → Spring Boot Modular Monolith. Gateway chuyển yêu cầu vào các module nội bộ; Redis phục vụ virtual queue, seat lock và cache.
+
+- **Đường ghi:** Write API → HikariCP write pool → SQL Server Primary. SQL Server là nguồn sự thật cho account, seats, orders, payments, tickets và giao dịch ACID.
+- **Đường đọc:** Read API → Redis cache hoặc HikariCP read pool → readable secondary khi topology/edition cho phép. Trong tối đa 5 giây sau thao tác ghi, request cần read-your-write quay về Primary (D-013).
+- **Xử lý bất đồng bộ:** Modular Monolith → RabbitMQ broker (D-025) → Worker riêng để gửi thông báo, xử lý tác vụ hoàn tiền và hủy đơn.
+- **Dữ liệu phụ:** SQL Server outbox/audit là nguồn sự thật; ELK chỉ lưu operational logs (D-029). Object storage giữ poster, tài liệu và tài sản tĩnh.
+- **Redis TTL:** queue inactivity 120 giây; seat hold chính xác 600 giây (10 phút); cache TTL không được dùng thay read-your-write.
+- **Baseline đã chốt:** SQL Server 2025 Enterprise HA/DR (D-026), RabbitMQ (D-025), không partition/NoSQL (D-028/D-029), online-only check-in (D-023). **Cổng go-live còn phải có bằng chứng:** benchmark 100.000 CCU và DBA/Finance license/sizing sign-off (D-030); các mục này chưa được coi là đã nghiệm thu.

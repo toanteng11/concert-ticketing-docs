@@ -1,4 +1,4 @@
-﻿# UC06 — Chọn & Giữ Ghế (Select & Hold Seats)
+# UC06 — Chọn & Giữ Ghế (Select & Hold Seats)
 
 ## 1. Thông Tin Chung
 
@@ -19,6 +19,33 @@
 Use case này xử lý hành động chọn ghế trên sơ đồ và khóa giữ ghế tạm thời (Seat Hold) trong 10 phút. Đây là bước quan trọng nhất cần đảm bảo **Zero Double-Booking** — chỉ đúng một khách hàng được giữ một ghế tại một thời điểm.
 
 ---
+
+<!-- BEGIN MERMAID USE-CASE UC06 -->
+### Sơ đồ Use Case (Mermaid)
+
+```mermaid
+flowchart LR
+  customer["👤 Khách hàng trong khu chọn ghế"]
+  timer["⏱ Bộ hẹn giờ hệ thống"]
+  subgraph SYS["Concert Ticketing System — UC06"]
+    direction TB
+    select(["Chọn ghế còn AVAILABLE"])
+    hold(["Giữ ghế nguyên tử cho khách hàng"])
+    release(["Khách chủ động nhả ghế"])
+    expire(["Tự nhả ghế khi hết TTL giữ chỗ"])
+  end
+  customer --- select
+  select -.->|«bao gồm»| hold
+  customer --- release
+  timer --- expire
+  classDef actor fill:#fff,stroke:#334155,stroke-width:1px
+  classDef system fill:#f1f5f9,stroke:#64748b,stroke-width:1px
+  class customer actor
+  class timer system
+  note["TTL giữ ghế 600 giây từ lần chọn ghế đầu tiên; chọn thêm ghế không khởi động lại TTL.<br/>Queue Access Token hết hạn sau 120 giây không heartbeat xác thực; chỉ giải phóng slot admission, không phải TTL giữ ghế.<br/>Mất heartbeat 120 giây thu hồi Queue Access Token và slot admission; không giải phóng seat hold cho tới hết TTL 600 giây hoặc một hành động hủy/order hợp lệ."]
+  hold -.-> note
+```
+<!-- END MERMAID USE-CASE UC06 -->
 
 ## 3. Điều Kiện Tiên Quyết (Preconditions)
 
@@ -84,7 +111,7 @@ Use case này xử lý hành động chọn ghế trên sơ đồ và khóa gi�
 | Bước | Mô tả |
 |---|---|
 | 1 | Customer nhấn "Hủy tất cả" hoặc đóng tab/trình duyệt |
-| 2 | Nếu đóng tab: Heartbeat dừng → sau 120 giây hệ thống tự giải phóng tất cả ghế đang HELD |
+| 2 | Nếu đóng tab, heartbeat dừng; sau 120 giây hệ thống thu hồi Queue Access Token và slot admission. Mọi ghế HELD vẫn thuộc customer đến hết TTL 600 giây, trừ khi customer hủy chủ động hoặc order flow hợp lệ kết thúc hold |
 | 3 | Nếu nhấn "Hủy tất cả": API giải phóng tất cả ghế đang giữ của customer ngay lập tức |
 | 4 | Queue Access Token bị thu hồi; slot trong khu chọn ghế được giải phóng cho người tiếp theo |
 
@@ -156,6 +183,6 @@ Use case này xử lý hành động chọn ghế trên sơ đồ và khóa gi�
 | UC06.1 — Chọn ghế (Hold) | Customer | Redis (Distributed Lock), Database | Atomic locking, 2 lớp bảo vệ |
 | UC06.2 — Bỏ chọn ghế (Release) | Customer | Redis, WebSocket Server | Chỉ chính chủ mới được release |
 | UC06.3 — Auto-release khi hết TTL | System (Auto) | Redis Keyspace Notification | Tự động không cần user action |
-| UC06.4 — Auto-release khi mất heartbeat | System (Auto) | Redis TTL | Sau 120s không có heartbeat |
+| UC06.4 — Thu hồi queue admission khi mất heartbeat | System (Auto) | Redis TTL | Sau 120s thu hồi Queue Access Token/slot admission; seat hold tiếp tục đến TTL 600s |
 | UC06.5 — Tiến hành đặt vé | Customer | — | Trigger UC07 |
 

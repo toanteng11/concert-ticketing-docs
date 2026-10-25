@@ -1,15 +1,15 @@
-﻿# 02 — Ước Tính Dung Lượng Lưu Trữ (Storage Capacity Estimation)
+# 02 — Ước Tính Dung Lượng Lưu Trữ (Storage Capacity Estimation)
 
 ## 1. Giới Thiệu & Mục Tiêu Quy Hoạch
 
 Quy hoạch dung lượng lưu trữ (**Storage Capacity Planning**) là tiền đề cốt lõi để đảm bảo hệ thống vận hành ổn định trong thời gian dài (1 năm, 3 năm, 5 năm) mà không gặp sự cố cạn kiệt đĩa cứng (Disk Exhaustion) hoặc suy giảm hiệu năng do kích thước bảng cơ sở dữ liệu phình to.
 
 Tài liệu này lượng hóa chi tiết nhu cầu lưu trữ trên 5 tầng lưu trữ dữ liệu chuyên biệt:
-1. **Cơ sở dữ liệu Quan hệ (RDBMS - MySQL 8.0):** Lưu trữ dữ liệu giao dịch cốt lõi (ACID-compliant).
+1. **Cơ sở dữ liệu Quan hệ (RDBMS - SQL Server):** Lưu trữ dữ liệu giao dịch cốt lõi (ACID-compliant).
 2. **Bộ đệm In-Memory (Redis Cluster):** Lưu trữ phiên làm việc, hàng chờ ảo, khóa giữ ghế và bộ đếm rate limit.
-3. **Message Broker (Spring @Async Events):** Lưu trữ hàng đợi sự kiện và nhật ký thông báo phân tán.
+3. **Message Broker (RabbitMQ):** Lưu job/event bất đồng bộ; SQL Server transactional outbox là nguồn bền vững để phát lại tối đa 7 ngày.
 4. **Kho Lưu Trữ Đối Tượng (Object Storage - AWS S3 / MinIO):** Lưu trữ hình ảnh vé, tài liệu pháp lý, hóa đơn PDF và file xuất báo cáo.
-5. **Hệ Thống Phân Tích & Nhật Ký (Log & Search - Elasticsearch / MySQL Read Replica):** Lưu trữ Audit Log, Access Log và chỉ mục tìm kiếm.
+5. **Hệ Thống Phân Tích & Nhật Ký:** Log/search store phụ; SQL Server vẫn là nguồn sự thật cho dữ liệu giao dịch.
 
 ---
 
@@ -26,7 +26,7 @@ Tài liệu này lượng hóa chi tiết nhu cầu lưu trữ trên 5 tầng l�
 
 ---
 
-## 3. Ước Tính Kích Thước Bảng Cơ Sở Dữ Liệu Quan Hệ (MySQL 8.0 Schema Sizing)
+## 3. Ước Tính Kích Thước Bảng Cơ Sở Dữ Liệu Quan Hệ (SQL Server Schema Sizing)
 
 Hệ thống sử dụng hệ số mở rộng **Hệ số Dự phòng & Chỉ mục (Index & Overhead Factor) = 1.6** (nghĩa là kích thước chỉ mục B-tree, foreign key và khoảng trống khối dữ liệu chiếm thêm $60\%$ so với dung lượng dữ liệu thô).
 
@@ -44,10 +44,10 @@ Hệ thống sử dụng hệ số mở rộng **Hệ số Dự phòng & Chỉ m
 | `audit_logs` (Nhật ký kiểm toán) | 800 bytes | 10.000.000 | 8.0 GB | **12.80 GB** | 41.60 GB | 115.20 GB |
 | **TỔNG CỘNG (RDBMS)** | — | — | **12.41 GB** | **19.86 GB** | **64.78 GB** | **178.22 GB** |
 
-> **Nhận xét kiến trúc:**  
+> **Ước lượng sơ bộ — chưa phải sizing đã xác nhận:**<br>
 > Kích thước RDBMS cốt lõi (bỏ qua Audit Log) sau 5 năm hoạt động chỉ vào khoảng $\approx 63\text{ GB}$. Kể cả khi cộng toàn bộ Audit Log, dung lượng cũng chưa vượt quá $200\text{ GB}$.  
-> $\rightarrow$ Cơ sở dữ liệu MySQL 8.0 hoàn toàn có thể lưu trữ trên một cụm Database Server tiêu chuẩn (Primary - Standby Replica) với ổ đĩa NVMe SSD 500 GB – 1 TB mà **chưa bắt buộc phải Sharding** trong 3–5 năm đầu.  
-> Tuy nhiên, với bảng `audit_logs` và `checkin_logs`, áp dụng chiến lược **MySQL 8.0 Table Partitioning** theo tháng (`PARTITION BY RANGE (created_at)`) để tối ưu tốc độ truy vấn và dễ dàng dọn dẹp dữ liệu cũ (Data Archival).
+> $\rightarrow$ Mô hình một SQL Server database là giả định hoạch định ban đầu; storage/compute, giới hạn tăng trưởng, HA và licensing phải được kiểm tra bằng benchmark D-026/D-030 trước khi chốt.<br>
+> Không dùng partition trong baseline theo D-028; dùng index, retention và archival. Chỉ đánh giá RANGE trên bảng lịch sử append-only nếu benchmark chứng minh cần. T-SQL không dùng cú pháp PARTITION BY RANGE của MySQL.
 
 ---
 
@@ -73,18 +73,18 @@ Redis được dùng để lưu trữ dữ liệu nóng có độ trễ cực th
 
 ---
 
-## 5. Ước Tính Message Broker & Event Streaming (Spring @Async Events)
+## 5. Ước Tính RabbitMQ Queue & Transactional Outbox
 
-spring-async chịu trách nhiệm lưu trữ các luồng sự kiện phân tán: `concert.events`, `seat.held`, `order.created`, `payment.success`, `notification.dispatch`.
+RabbitMQ durable queues vận chuyển event/job; SQL Server transactional outbox là nguồn bền vững để retry/replay tối đa 7 ngày theo D-029. Backlog và payload size ở broker là giả định sizing, không phải retention của nguồn sự thật.
 
 | Tham số định lượng | Giá trị tính toán | Giải thích |
 |---|---|---|
 | **Kích thước trung bình 1 Event message** | $1\text{ KB}$ ($1.024\text{ bytes}$) | Chuỗi JSON chứa metadata sự kiện và payload |
 | **Số sự kiện phát sinh trong 1 giờ mở bán cao điểm** | $1.500.000$ messages | Xếp hàng, chọn ghế, giữ ghế, gia hạn, trả ghế, tạo đơn, thanh toán |
 | **Dung lượng phát sinh giờ cao điểm** | $1.500.000 \times 1\text{ KB} \approx \mathbf{1.5\text{ GB}}$ | Dữ liệu thô |
-| **Hệ số sao lưu phân tán (Replication Factor = 3)** | $1.5\text{ GB} \times 3 = \mathbf{4.5\text{ GB}}$ | 3 bản sao lưu trữ trên 3 spring-async Broker khác nhau |
-| **Thời gian lưu vết tin nhắn (Retention Period)** | 7 ngày ($168\text{ giờ}$) | Đủ thời gian replay sự kiện khi có sự cố xử lý |
-| **Tổng dung lượng đĩa cứng spring-async yêu cầu (Năm 1)** | Khoảng **50 GB – 100 GB** đĩa SSD trên mỗi Broker | Hoàn toàn đáp ứng dư dả cho toàn bộ các đợt mở bán trong tuần |
+| **Bản sao quorum queue (mục tiêu 3 replicas)** | Dung lượng thực tế phụ thuộc queue quorum, payload, backlog và topology | Cấu hình RabbitMQ HA theo D-025/D-030; không lấy Kafka replication factor làm sizing |
+| **Outbox replay window** | Tối đa 7 ngày theo D-029 | SQL Server giữ event bền vững; thời hạn lưu tại RabbitMQ do queue policy vận hành, không thay thế outbox |
+| **Tổng dung lượng đĩa cứng message broker yêu cầu (Năm 1)** | Khoảng **50 GB – 100 GB** đĩa SSD trên mỗi Broker | Hoàn toàn đáp ứng dư dả cho toàn bộ các đợt mở bán trong tuần |
 
 ---
 
@@ -117,13 +117,30 @@ Nhằm tối ưu hóa chi phí vận hành hạ tầng đám mây:
    - Áp dụng cho: Dữ liệu giao dịch, hợp đồng pháp lý, nhật ký soát vé của sự kiện trên 180 ngày (lưu trữ phục vụ kiểm toán tài chính và nghĩa vụ thuế trong 5 năm theo quy định pháp luật Việt Nam).
    - Tiết kiệm đến $80\%$ chi phí lưu trữ. Thời gian phục hồi dữ liệu từ 1 đến 5 giờ.
 
+<!-- BEGIN MERMAID DIAGRAM CAP-STORAGE -->
+### Các tầng lưu trữ và vòng đời dữ liệu
+
+```mermaid
+flowchart LR
+  tx["Giao dịch và trạng thái nghiệp vụ"] --> sql[("SQL Server<br/>dữ liệu quan hệ / giao dịch")]
+  transient["Queue state, seat locks, counters"] --> redis[("Redis<br/>dữ liệu nóng, TTL")]
+  events["SQL transactional outbox"] --> broker["RabbitMQ<br/>durable queues, retry, DLQ"]
+  assets["Poster, sơ đồ ghế, PDF vé, file xuất"] --> s3["S3 Standard / object storage"]
+  s3 --> warm["S3 Infrequent Access<br/>warm tier"] --> cold["S3 Glacier Flexible<br/>cold/archive tier"]
+  sql --> backup["Backup and recovery storage"]
+  redis --> ttl["TTL expiry; không archive persistent session state"]
+  note["No voucher table or separate NoSQL store in baseline. Outbox replay up to 7 days; operational logs are separate from transaction truth."]
+  broker -.-> note
+```
+<!-- END MERMAID DIAGRAM CAP-STORAGE -->
+
+
 ---
 
 ## 8. Kế Hoạch Sao Lưu & Phục Hồi Dữ Liệu (Backup & RTO/RPO Targets)
 
 | Loại dữ liệu | Phương thức sao lưu | Tần suất thực hiện | Thời gian lưu giữ bản sao | Điểm phục hồi mục tiêu (RPO) | Thời gian phục hồi mục tiêu (RTO) |
 |---|---|---|---|---|---|
-| **Cơ sở dữ liệu MySQL 8.0** | Full Snapshot + WAL Archiving (Continuous Archiving) | Full: 1 lần/ngày lúc 01:00 AM; WAL: Mỗi 5 phút | 30 ngày gần nhất | **$\le 5$ phút** | **$\le 30$ phút** |
-| **Dữ liệu Redis Cache** | RDB Snapshot + AOF (Everysec) | RDB: Mỗi 6 giờ; AOF: Mỗi giây | 7 ngày | **$\le 1$ giây** | **$\le 5$ phút** |
-| **Object Storage (S3)** | S3 Cross-Region Replication (CRR) | Đồng bộ liên tục thời gian thực | 3 năm | **$\approx 0$ giây** | **$\le 15$ phút** |
-
+| **Cơ sở dữ liệu SQL Server** | Native full/differential/transaction-log backups | Full hằng ngày; differential mỗi 6 giờ; transaction log mỗi 5 phút | 35 ngày | Local AG: RPO 0 / RTO ≤5 phút; cross-region DR: RPO ≤5 phút / RTO ≤60 phút theo D-026; cần diễn tập để xác nhận |
+| **Dữ liệu Redis Cache** | Cache/queue/lock có TTL; tái tạo từ nguồn có thẩm quyền khi cần | Không áp dụng sao lưu bắt buộc cho dữ liệu ephemeral | Không lưu làm hồ sơ giao dịch | Không áp dụng RPO/RTO giao dịch; mất Redis không được làm sai dữ liệu giao dịch |
+| **Object Storage (S3)** | Versioning/replication theo cấu hình bucket đã duyệt | Theo chính sách vận hành thực tế | Theo retention policy đã duyệt | Cần xác nhận theo cấu hình provider | Cần xác nhận qua restore test |

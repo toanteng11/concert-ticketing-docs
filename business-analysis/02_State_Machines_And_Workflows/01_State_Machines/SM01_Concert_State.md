@@ -1,4 +1,4 @@
-﻿# SM01 — State Machine: Concert (Trạng Thái Sự Kiện Concert)
+# SM01 — State Machine: Concert (Trạng Thái Sự Kiện Concert)
 
 ## 1. Mục Đích
 
@@ -20,8 +20,9 @@ Tài liệu mô tả toàn bộ vòng đời trạng thái của một **Concert
 | `ON_SALE` | Đang mở bán | Đã đến `sale_start_time`; hàng chờ và khu chọn ghế hoạt động | ✅ |
 | `SOLD_OUT` | Hết vé | Toàn bộ ghế `SOLD`; hàng chờ đóng, không nhận thêm lượt | ✅ |
 | `CLOSED` | Đã đóng bán | Organizer hoặc Admin đóng bán chủ động trước khi hết vé | ✅ |
+| `PENDING_CANCELLATION` | Chờ duyệt hủy | Organizer gửi yêu cầu hủy; lưu trạng thái trước đó để khôi phục nếu Admin từ chối | ✅ |
 | `COMPLETED` | Đã hoàn thành | Sự kiện đã diễn ra; mở cổng đánh giá (T+24h sau khi kết thúc) | ✅ (Terminal) |
-| `CANCELLED` | Đã hủy | Concert bị hủy bỏ; toàn bộ vé `PAID` → hoàn tiền 100% | ✅ (Terminal) |
+| `CANCELLED` | Đã hủy | Hủy trước COMPLETED; refund 100% order.final_amount cho mọi order PAID kể cả vé CHECKED; ticket vô hiệu, check-in logs bất biến, ghế không bán lại (D-017) | ✅ (Terminal) |
 
 ---
 
@@ -50,7 +51,17 @@ stateDiagram-v2
     CLOSED --> ON_SALE : Admin mở bán lại (nếu còn ghế)
     CLOSED --> CANCELLED : Admin hủy hoàn toàn
 
-    COMPLETED --> [*]
+    PUBLISHED --> PENDING_CANCELLATION : Organizer yêu cầu hủy
+    ON_SALE --> PENDING_CANCELLATION : Organizer yêu cầu hủy
+    SOLD_OUT --> PENDING_CANCELLATION : Organizer yêu cầu hủy
+    CLOSED --> PENDING_CANCELLATION : Organizer yêu cầu hủy
+    PENDING_CANCELLATION --> CANCELLED : Admin phê duyệt yêu cầu
+    PENDING_CANCELLATION --> PUBLISHED : Admin từ chối; khôi phục status_before_cancellation (nếu trạng thái trước đó là PUBLISHED)
+    PENDING_CANCELLATION --> ON_SALE : Admin từ chối; khôi phục status_before_cancellation (nếu trạng thái trước đó là ON_SALE)
+    PENDING_CANCELLATION --> SOLD_OUT : Admin từ chối; khôi phục status_before_cancellation (nếu trạng thái trước đó là SOLD_OUT)
+    PENDING_CANCELLATION --> CLOSED : Admin từ chối; khôi phục status_before_cancellation (nếu trạng thái trước đó là CLOSED)
+
+    COMPLETED --> [*] : Trạng thái cuối; không được hủy sau khi hoàn tất
     CANCELLED --> [*]
 ```
 
@@ -72,7 +83,8 @@ stateDiagram-v2
 | T-10 | `CLOSED` | Scheduler T+24h sau concert.end_time | `current_time >= (concert.end_time + 24h)` | `COMPLETED` | System (Scheduler) | BR-CON-008 |
 | T-11 | `CLOSED` | Admin mở bán lại | Admin xác nhận mở lại; còn ghế `AVAILABLE` | `ON_SALE` | Admin | — |
 | T-12 | `PUBLISHED` / `ON_SALE` / `SOLD_OUT` / `CLOSED` | Admin hủy concert | Admin xác nhận kèm lý do pháp lý; kích hoạt hoàn tiền hàng loạt | `CANCELLED` | Admin | BR-RFD-004 |
-| T-13 | `ON_SALE` / `PUBLISHED` | Organizer gửi yêu cầu hủy | Gửi trước giờ biểu diễn ≥ 72 giờ; Admin xác nhận cuối | `CANCELLED` | Organizer (→ Admin xác nhận) | BR-CON-006, BR-RFD-004 |
+| T-13 | `PUBLISHED` / `ON_SALE` / `SOLD_OUT` / `CLOSED` | Organizer gửi yêu cầu hủy | Lưu `status_before_cancellation`, `cancellation_requested_at`; điều kiện thời gian theo BR-CON-006 | `PENDING_CANCELLATION` | Organizer | BR-CON-006 |
+| T-14 | `PENDING_CANCELLATION` | Admin duyệt hoặc từ chối | Phê duyệt → kích hoạt quy trình hủy; từ chối → khôi phục `status_before_cancellation`; audit cả hai nhánh | `CANCELLED` hoặc trạng thái trước đó | Admin | BR-RFD-004 |
 
 ---
 
@@ -86,12 +98,13 @@ Khi concert chuyển sang `CANCELLED`, hệ thống **tự động** kích hoạ
 1. Phát sự kiện domain: ConcertCancelledEvent {concert_id, cancelled_by, reason, timestamp}
 2. Order Service lắng nghe → Tìm toàn bộ Order có status = PAID liên kết với concert_id
 3. Với mỗi Order PAID:
-   a. Tạo RefundRequest → payment_transactions mới (action = REFUND)
-   b. Gọi API hoàn tiền của VNPay / MoMo tương ứng
-   c. Khi hoàn tiền thành công → order.status = REFUNDED
-   d. Tất cả ticket trong order → ticket.status = CANCELLED (QR vô hiệu hóa)
-   e. Tất cả seat liên kết → seat.status = AVAILABLE (dù concert đã hủy, để dữ liệu nhất quán)
-4. Notification Service → Gửi email + push notification xin lỗi và thông báo hoàn tiền cho 100% khách hàng bị ảnh hưởng
+   a. Với mọi order PAID, tạo refund record riêng; order chuyển PAID → REFUND_PENDING.
+   b. Mọi order PAID, kể cả có vé CHECKED, nhận refund 100% order.final_amount theo D-017; ticket vô hiệu, check-in log bất biến, ghế không mở bán lại.
+   c. Refund Service gửi yêu cầu tới VNPay/MoMo theo idempotency key; kết quả được ghi trong `refunds`.
+   d. Khi provider xác nhận hoàn tất → order.status = REFUNDED; nếu UNKNOWN thì tiếp tục reconciliation theo D-032.
+   e. Tất cả ticket trong order → ticket.status = CANCELLED ngay khi hủy concert; QR vô hiệu hóa và check-in log giữ nguyên.
+   f. Ghế đã bán vẫn giữ trạng thái SOLD/không khả dụng; các ghế khác của concert CANCELLED không được bán. Không chuyển ghế về AVAILABLE.
+4. Notification Service tạo thông báo IN_APP bắt buộc và enqueue email/push nếu kênh đủ điều kiện; lưu trạng thái provider khi có receipt, không cam kết provider giao tới 100% người nhận.
 ```
 
 ### 5.2 Trạng thái `COMPLETED` — Mở Cổng Đánh Giá

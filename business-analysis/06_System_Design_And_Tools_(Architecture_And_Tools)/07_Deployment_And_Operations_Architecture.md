@@ -1,207 +1,288 @@
-﻿# 07 — Kiến Trúc Triển Khai & Vận Hành Hệ Thống (Deployment & Operations Architecture)
+# 07 — Kiến Trúc Triển Khai & Vận Hành Hệ Thống (Deployment & Operations Architecture)
 
 ## 1. Giới Thiệu & Triết Lý Vận Hành
 
-Tài liệu này đặc tả toàn bộ kiến trúc hạ tầng mạng, cấu trúc cụm máy chủ, quy trình phát hành phần mềm liên tục (**CI/CD**) và quy trình chuẩn bị vận hành trước giờ mở bán vé sự kiện (**Flash-Sale Operational Runbook**).
+Tài liệu này đặc tả kiến trúc hạ tầng, quy trình CI/CD và runbook vận hành Flash-Sale cho hệ thống Concert Ticketing.
 
-> **Ghi chú triển khai:** Nhờ chuyển sang kiến trúc **Modular Monolith**, cấu trúc triển khai đã được đơn giản hóa tối đa: từ 10+ Docker images (Microservices) xuống còn **3 services trong Docker Compose** (app + Redis + MySQL), giúp nhóm phát triển có thể chạy toàn bộ hệ thống trên laptop trong 30 giây.
-
-Mục tiêu vận hành:
-1. **Triển Khai Đơn Giản (Simple & Reproducible Deployment):** Toàn bộ stack triển khai được định nghĩa trong `docker-compose.yml` và `Dockerfile`, phiên bản hóa trong GitHub.
-2. **Triển Khai Không Gián Đoạn (Zero-Downtime Deployment):** Nâng cấp phiên bản phần mềm mà không làm rớt kết nối hoặc gây lỗi giao dịch, thực hiện qua Rolling Update.
-3. **Môi Trường Nhất Quán (Environment Parity):** Dev, Staging và Production dùng cùng Docker image, chỉ khác nhau ở file `.env` cấu hình.
+> **Ghi chú triển khai:** Nhờ kiến trúc **Hybrid Modular Monolith + Worker**, cấu trúc triển khai cân bằng giữa đơn giản và khả năng scale: **6 services minh họa trong Docker Compose** (nginx + app + worker + rabbitmq + redis + SQL Server). So với Microservices thuần túy (10+ services), cấu trúc này dễ vận hành hơn nhiều trong khi vẫn có khả năng scale Worker độc lập.
 
 ---
 
 ## 2. Cấu Trúc Docker Compose (Development & Staging)
 
-Môi trường phát triển và staging được cấu hình bằng Docker Compose với 3 services chính:
+Đây là mẫu local development dùng SQL Server 2025 Developer và RabbitMQ. Production dùng SQL Server 2025 Enterprise Always On AG theo D-026; Developer edition không dùng trong production.
 
 ```yaml
-# docker-compose.yml
-version: '3.8'
 services:
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      app:
+        condition: service_started
+    networks: [ticketing-network]
 
   app:
-    image: ticketplatform/app:${APP_VERSION}
+    image: ticketplatform/monolith:${APP_VERSION}
     build:
-      context: .
+      context: ./ticket-platform
       dockerfile: Dockerfile
     ports:
       - "8080:8080"
     environment:
-      - SPRING_PROFILES_ACTIVE=dev
-      - DB_HOST=mysql
-      - DB_PORT=3306
-      - DB_NAME=ticketdb
-      - DB_USERNAME=${DB_USERNAME}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
+      SPRING_PROFILES_ACTIVE: ${ENV:-dev}
+      DB_HOST: sqlserver
+      DB_PORT: 1433
+      DB_NAME: ticketdb
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      REDIS_HOST: redis
+      RABBITMQ_HOST: rabbitmq
     depends_on:
-      mysql:
+      sqlserver:
         condition: service_healthy
       redis:
         condition: service_healthy
-    networks:
-      - ticketing-network
+      rabbitmq:
+        condition: service_healthy
+    networks: [ticketing-network]
 
-  mysql:
-    image: mysql:8.0
+  worker:
+    image: ticketplatform/worker:${WORKER_VERSION}
+    build:
+      context: ./ticket-worker
+      dockerfile: Dockerfile
     environment:
-      MYSQL_DATABASE: ticketdb
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_USER: ${DB_USERNAME}
-      MYSQL_PASSWORD: ${DB_PASSWORD}
+      SPRING_PROFILES_ACTIVE: ${ENV:-dev}
+      DB_HOST: sqlserver
+      DB_PORT: 1433
+      DB_NAME: ticketdb
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      RABBITMQ_HOST: rabbitmq
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY}
+      FCM_SERVER_KEY: ${FCM_SERVER_KEY}
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks: [ticketing-network]
+
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
     volumes:
-      - mysql-data:/var/lib/mysql
-      - ./init-scripts:/docker-entrypoint-initdb.d
+      - rabbitmq-data:/var/lib/rabbitmq
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 10s
       retries: 5
-    networks:
-      - ticketing-network
+    networks: [ticketing-network]
 
   redis:
     image: redis:7.2-alpine
     command: redis-server --requirepass ${REDIS_PASSWORD}
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep -q PONG"]
       interval: 5s
-    networks:
-      - ticketing-network
+      retries: 5
+    networks: [ticketing-network]
+
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2025-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
+      MSSQL_PID: Developer
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver-data:/var/opt/mssql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$${MSSQL_SA_PASSWORD}"
+          -C -Q "SELECT 1" || exit 1
+      interval: 10s
+      retries: 10
+      start_period: 30s
+    networks: [ticketing-network]
 
 volumes:
-  mysql-data:
+  sqlserver-data:
   redis-data:
+  rabbitmq-data:
 
 networks:
   ticketing-network:
     driver: bridge
 ```
 
+> SQL Server container example is for local development. Developer edition is not licensed for production. The image provisions the system administrator login; a migration/init task must create the database and least-privilege application login. Production uses SQL Server 2025 Enterprise Always On AG with synchronous local secondary and asynchronous cross-region DR per D-026. DBA/Finance must sign off license and sizing before go-live. NoSQL is excluded by D-029.
+
 ---
 
-## 3. Dockerfile Cho Ứng Dụng Spring Boot
+## 3. Dockerfile — Multi-Stage Build
+
+### Monolith App
 
 ```dockerfile
-# Dockerfile — Multi-stage build
 FROM eclipse-temurin:21-jdk-alpine AS builder
 WORKDIR /app
 COPY pom.xml .
 COPY src ./src
-RUN ./mvnw package -DskipTests
+RUN ./mvnw package -DskipTests -pl ticket-platform
 
 FROM eclipse-temurin:21-jre-alpine AS runtime
 WORKDIR /app
-COPY --from=builder /app/target/ticket-platform-*.jar app.jar
+COPY --from=builder /app/ticket-platform/target/ticket-platform-*.jar app.jar
 EXPOSE 8080
-ENTRYPOINT ["java", "-jar", \
-  "-XX:+UseG1GC", \
-  "-Xms512m", "-Xmx2g", \
-  "-Dspring.profiles.active=${SPRING_PROFILES_ACTIVE}", \
-  "app.jar"]
+ENTRYPOINT ["java", "-XX:+UseG1GC", "-Xms512m", "-Xmx2g", "-jar", "app.jar"]
+```
+
+### Worker Service
+
+```dockerfile
+FROM eclipse-temurin:21-jdk-alpine AS builder
+WORKDIR /app
+COPY pom.xml .
+COPY src ./src
+RUN ./mvnw package -DskipTests -pl ticket-worker
+
+FROM eclipse-temurin:21-jre-alpine AS runtime
+WORKDIR /app
+COPY --from=builder /app/ticket-worker/target/ticket-worker-*.jar worker.jar
+EXPOSE 8081
+ENTRYPOINT ["java", "-XX:+UseG1GC", "-Xms256m", "-Xmx1g", "-jar", "worker.jar"]
 ```
 
 ---
 
-## 4. Cấu Trúc Mạng & Phân Vùng (VPC & Subnet Topology — Production)
+## 4. Cấu Hình RabbitMQ — Queues & Dead-Letter
 
-Môi trường Production được triển khai trên Cloud (AWS / GCP) với phân vùng mạng bảo mật:
+```
+Exchange: notification.exchange (direct)
+  ├── Queue: notification.send     → Worker Consumer (Email + Push)
+  │     └── x-dead-letter-exchange: dlq.exchange
+  │     └── x-message-ttl: 300000 (5 phút — nếu không xử lý được)
+  ├── Queue: order.cancel          → Worker Consumer (Hủy đơn)
+  └── Queue: refund.process        → Worker Consumer (Hoàn tiền VNPay/MoMo)
 
-| Phân vùng mạng | Dải IP (CIDR) | Truy cập Internet | Thành phần triển khai | Bảo vệ |
+Exchange: dlq.exchange (fanout)
+  └── Queue: notification.dlq      → Alert team kỹ thuật khi message thất bại 3 lần
+```
+
+---
+
+## 5. Cấu Trúc Mạng Production (VPC & Subnet)
+
+| Phân vùng mạng | Dải IP | Truy cập Internet | Thành phần | Bảo vệ |
 |---|---|---|---|---|
-| **Public Subnets** | `10.0.1.0/24–3.0/24` | Trực tiếp qua IGW | Application Load Balancer (ALB), NAT Gateways | Chỉ mở TCP 443 & 80 |
-| **Private App Subnets** | `10.0.10.0/22–18.0/22` | Outbound qua NAT | **Spring Boot App Pods** (EKS / Docker Swarm), Kong Gateway | Không có IP công khai |
-| **Isolated DB Subnets** | `10.0.30.0/24–32.0/24` | **KHÔNG** | MySQL Primary & Replicas, Redis Cluster | Chỉ chấp nhận kết nối từ App Subnet |
+| **Public Subnets** | `10.0.1.0/24–3.0/24` | Trực tiếp qua IGW | ALB / Nginx | Chỉ mở TCP 443 & 80 |
+| **Private App Subnets** | `10.0.10.0/22–18.0/22` | Outbound qua NAT | App Pods, Worker Pods | Không IP công khai |
+| **Message Broker Subnet** | `10.0.20.0/24` | Không | RabbitMQ Cluster | Chỉ từ App/Worker Subnet |
+| **Isolated DB Subnets** | `10.0.30.0/24–32.0/24` | Không | SQL Server Primary/readable secondary, Redis | Chỉ từ App Subnet |
+
+<!-- BEGIN MERMAID DIAGRAM DEPLOY-VPC -->
+### Topology mạng Production theo trust boundary
+
+```mermaid
+flowchart TB
+  internet["Internet clients"] --> igw["Internet Gateway"] --> public["Public Subnets<br/>ALB / Nginx; ports 80/443"]
+  public --> app["Private App Subnets<br/>App Pods and Worker Pods; no public IP"]
+  app --> broker["Broker Subnet<br/>broker cluster; private access only<br/>RabbitMQ baseline per D-025"]
+  app --> data["Isolated DB Subnets<br/>SQL Server Primary / readable secondary and Redis"]
+  app --> nat["NAT egress for approved outbound calls"]
+  nat --> providers["VNPay / MoMo / Email / Push / SMS providers"]
+  note["Security groups permit broker traffic only from app/worker subnets and database/cache traffic only from approved application subnets. Secondary SQL topology follows D-026; licensing/sizing remain a DBA/Finance go-live gate."]
+  data -.-> note
+```
+<!-- END MERMAID DIAGRAM DEPLOY-VPC -->
+
 
 ---
 
-## 5. Quy Trình CI/CD (GitHub Actions)
+## 6. CI/CD Pipeline (GitHub Actions)
 
-Toàn bộ chu trình từ khi developer commit đến khi chạy trên Production:
+<!-- BEGIN MERMAID DIAGRAM CONVERT-07_Deployment_And_Operations_Architecture -->
+### CI/CD pipeline
 
+```mermaid
+flowchart TD
+  push["Git push / Pull Request to GitHub"]
+  quality["Test and quality gates<br/>JUnit, coverage, SonarQube, Trivy"]
+  build["Build ticket-platform and ticket-worker images"]
+  registry["Push images to container registry"]
+  staging["Deploy Staging<br/>integration checks"]
+  approve{"Manual Tech Lead approval"}
+  prod["Production rolling update"]
+  health{"Health check passes?"}
+  switch["Shift traffic; graceful old-instance shutdown"]
+  worker["Drain worker messages before shutdown"]
+  fail["Stop rollout and investigate"]
+  push --> quality --> build --> registry --> staging --> approve --> prod --> health
+  health -->|yes| switch --> worker
+  health -->|no| fail
 ```
-[Developer: git push → GitHub]
-        ↓ (Kích hoạt GitHub Actions)
-[1. Compile & Unit Tests (Maven / JUnit 5)]
-   → Coverage >= 80% (JaCoCo)
-        ↓
-[2. Code Quality & Security Scan]
-   → SonarQube Quality Gate
-   → Trivy Container Vulnerability Scan
-        ↓
-[3. Build Docker Image]
-   → docker build (multi-stage)
-   → docker push → Docker Hub / AWS ECR
-        ↓
-[4. Deploy to Staging]
-   → docker-compose up -d (staging env)
-   → Run Integration Tests (Postman / RestAssured)
-        ↓
-[5. Manual Approval Gate]
-   → Tech Lead review trước khi deploy Production
-        ↓
-[6. Deploy to Production]
-   → Rolling Update (zero-downtime):
-     Khởi động instance mới → Health check pass
-     → Chuyển traffic → Tắt instance cũ
-```
+<!-- END MERMAID DIAGRAM CONVERT-07_Deployment_And_Operations_Architecture -->
 
-### Chiến Lược Rolling Update (Zero-Downtime)
 
-Khi deploy phiên bản mới cho ứng dụng Monolith trong Kubernetes hoặc Docker Swarm:
-- Khởi động Pod/Container mới với image version mới.
-- Health check endpoint `/actuator/health` phải trả về `200 OK` trước khi nhận traffic.
-- Load Balancer chuyển traffic sang instance mới từ từ.
-- Tắt instance cũ sau khi tất cả request đang xử lý hoàn tất (Graceful Shutdown).
 
 ---
 
-## 6. Cấu Hình Môi Trường (Environment Variables)
+## 7. Cấu Hình Biến Môi Trường
 
-| Biến môi trường | Mô tả | Ví dụ |
+| Biến | Mô tả | Ví dụ |
 |---|---|---|
-| `SPRING_PROFILES_ACTIVE` | Profile Spring Boot | `prod`, `staging`, `dev` |
-| `DB_HOST` | MySQL host | `mysql-primary.internal` |
-| `DB_PORT` | MySQL port | `3306` |
-| `DB_NAME` | Tên database | `ticketdb` |
-| `DB_USERNAME` | MySQL user | `appuser` |
-| `DB_PASSWORD` | MySQL password | *(secret)* |
-| `REDIS_HOST` | Redis host | `redis-cluster.internal` |
-| `REDIS_PASSWORD` | Redis auth | *(secret)* |
-| `JWT_SECRET_KEY` | JWT RS256 private key path | `/secrets/jwt-private.pem` |
-| `VNPAY_TMN_CODE` | VNPay terminal code | *(secret)* |
-| `VNPAY_HASH_SECRET` | VNPay hash secret | *(secret)* |
-| `MAIL_HOST` | SMTP server | `smtp.sendgrid.net` |
-| `MAIL_USERNAME` | SMTP user | *(secret)* |
-| `MAIL_PASSWORD` | SMTP password | *(secret)* |
+| `SPRING_PROFILES_ACTIVE` | Profile | `prod`, `staging`, `dev` |
+| `DB_HOST` | SQL Server host | `sqlserver-primary.internal` |
+| `DB_USERNAME` / `DB_PASSWORD` | SQL Server credentials | *(secret)* |
+| `REDIS_HOST` / `REDIS_PASSWORD` | Redis cluster | *(secret)* |
+| `RABBITMQ_HOST` | RabbitMQ host | `rabbitmq.internal` |
+| `RABBITMQ_USERNAME` / `RABBITMQ_PASSWORD` | RabbitMQ credentials | *(secret)* |
+| `JWT_PRIVATE_KEY_PATH` | RS256 private key | `/secrets/jwt-private.pem` |
+| `VNPAY_TMN_CODE` / `VNPAY_HASH_SECRET` | VNPay credentials | *(secret)* |
+| `MOMO_PARTNER_CODE` / `MOMO_SECRET_KEY` | MoMo credentials | *(secret)* |
+| `SENDGRID_API_KEY` | Email gateway | *(secret)* |
+| `FCM_SERVER_KEY` | Push notification | *(secret)* |
+| `AWS_S3_BUCKET` / `AWS_REGION` | Object storage | `ticket-assets`, `ap-southeast-1` |
 
 ---
 
-## 7. Quy Trình Vận Hành Trước Giờ Mở Bán Sự Kiện Lớn (Flash-Sale Runbook)
+## 8. Flash-Sale Runbook (Trước Giờ Mở Bán)
 
-Quy trình bắt buộc thực thi trước mỗi sự kiện bán vé quy mô trên 10.000 chỗ ngồi:
-
-| Mốc thời gian | Đội ngũ phụ trách | Hành động vận hành bắt buộc | Mục tiêu |
+| Mốc | Đội phụ trách | Hành động bắt buộc | Mục tiêu |
 |---|---|---|---|
-| **T - 2 Giờ** | Lead Backend & DevOps | 1. Kiểm tra sức khỏe tổng thể app, MySQL, Redis<br>2. Xác minh dung lượng trống MySQL > 40%<br>3. Kiểm tra hạn mức kết nối cổng VNPay/MoMo | Đảm bảo hạ tầng sạch |
-| **T - 60 Phút** | Lead Backend | 1. **Feature Freeze** — đóng băng deploy mã mới<br>2. Scale-out: Tăng số lượng app instances lên tối đa<br>3. Pre-load concert & seat map vào Redis Cache | Tránh cold-start khi người dùng ùa vào |
-| **T - 15 Phút** | Hệ thống tự động | 1. Kích hoạt Phòng Chờ Ảo (Waiting Room)<br>2. Chuyển hướng traffic vào queue endpoint<br>3. Bật chế độ ghi log tối giản (Minimal Logging) | Hấp thụ cú sốc lưu lượng ban đầu |
-| **T (Giờ G)** | Hệ thống tự động | 1. Thuật toán xáo trộn số thứ tự hàng chờ<br>2. Mở van xả 5.000 CCU vào khu vực chọn ghế<br>3. Dev team túc trực monitor P99 Latency & Error Rate | Vận hành bán vé chính thức |
-| **T + 30 Phút** | Product Owner & Lead Dev | 1. Vé bán hết hoặc lưu lượng hạ nhiệt: Đóng hàng chờ<br>2. Scale-in app instances về mức bình thường<br>3. Đối soát nhanh số vé đã bán vs. số tiền nhận | Hoàn tất đợt mở bán |
+| **T - 2 Giờ** | Lead Backend + DevOps | Kiểm tra sức khỏe App, Worker, SQL Server, Redis, RabbitMQ<br>Xác minh RabbitMQ Queue rỗng (không còn message tồn đọng)<br>Kiểm tra hạn mức kết nối VNPay/MoMo | Hạ tầng sạch, sẵn sàng |
+| **T - 60 Phút** | Lead Backend | Feature Freeze — ngừng deploy mới<br>Scale-out: tăng App instances lên tối đa<br>Tăng Worker instances (xử lý email nhanh hơn)<br>Pre-load Concert & Seat Map vào Redis Cache | Tránh cold-start khi surge |
+| **T - 15 Phút** | Hệ thống tự động | Kích hoạt Virtual Queue (Holding Room)<br>Chuyển hướng tất cả traffic vào queue endpoint<br>Bật Minimal Logging mode | Hấp thụ traffic burst |
+| **T = 0** | Hệ thống tự động | Fisher-Yates Shuffle số thứ tự hàng chờ<br>Mở van 5.000 CCU vào khu vực chọn ghế<br>Dev team theo dõi Grafana: P99 Latency, Error Rate, Queue depth | Bán vé chính thức |
+| **T + 30 Phút** | PO + Lead Dev | Đóng hàng chờ (vé hết / traffic hạ)<br>Scale-in instances về mức bình thường<br>Đối soát: số vé bán = số tiền nhận = số tickets issued | Hoàn tất đợt bán |
 
 ---
 
-## 8. Giám Sát & Quan Sát Hệ Thống (Observability Stack)
+## 9. Giám Sát & Quan Sát (Observability)
 
-| Công cụ | Vai trò | Tích hợp |
-|---|---|---|
-| **Spring Boot Actuator** | Health check, Metrics endpoint (`/actuator/health`, `/actuator/metrics`) | Tích hợp sẵn trong app |
-| **Prometheus** | Thu thập metrics từ Actuator endpoint | Cấu hình scrape job trong prometheus.yml |
-| **Grafana** | Dashboard hiển thị P50/P95/P99 Latency, Error Rate, JVM Heap Usage | Import dashboard từ Grafana Community |
-| **Logback + ELK** | Structured JSON logging → Elasticsearch → Kibana | Cấu hình Logback appender |
-| **Sentry** | Theo dõi Exception & Error Tracking real-time | Tích hợp Sentry SDK cho Spring Boot |
+| Công cụ | Vai trò |
+|---|---|
+| **Spring Boot Actuator** | `/actuator/health`, `/actuator/metrics` — health check & JVM metrics |
+| **Prometheus + Grafana** | Dashboard P50/P95/P99 Latency, Error Rate, RabbitMQ Queue Depth, JVM Heap |
+| **RabbitMQ Management UI** | Monitor Queue depth, Consumer rate, DLQ messages |
+| **Logback + ELK Stack** | Structured JSON logs → Elasticsearch → Kibana |
+| **Sentry** | Exception tracking & alert real-time |

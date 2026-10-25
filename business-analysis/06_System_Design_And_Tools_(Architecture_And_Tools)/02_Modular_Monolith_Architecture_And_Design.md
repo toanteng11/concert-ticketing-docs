@@ -1,205 +1,345 @@
-﻿# 02 — Kiến Trúc Modular Monolith & Thiết Kế Module (Modular Monolith Architecture & Design)
+# 02 — Kiến Trúc Modular Monolith & Thiết Kế Module (Modular Monolith Architecture & Design)
 
-> **Lưu ý kiến trúc:** Hệ thống được thiết kế theo mô hình **Modular Monolith** — một ứng dụng Spring Boot duy nhất bao gồm các module nghiệp vụ được phân tách rõ ràng theo Bounded Context (DDD). Cách tiếp cận này đơn giản hóa việc triển khai, giao dịch ACID và debug so với Microservices, đồng thời vẫn duy trì ranh giới module rõ ràng để có thể nâng cấp trong tương lai.
+> **Kiến trúc chính thức:** Hệ thống áp dụng mô hình **Hybrid — Modular Monolith + Async Worker**:
+> - **Modular Monolith** (Spring Boot 3): Xử lý đồng bộ — Auth, Write API, Read API trong một JVM.
+> - **Message Queue** (RabbitMQ): Tách biệt các tác vụ bất đồng bộ không cần kết quả tức thì.
+> - **Worker Service** (Spring Boot riêng biệt): Consumer xử lý Email, Push, Hoàn tiền tự động.
 
 ---
 
 ## 1. Triết Lý Thiết Kế (Design Philosophy)
 
-Hệ thống áp dụng mô hình **Modular Monolith** theo phương pháp luận **Domain-Driven Design (DDD)** với các nguyên tắc cốt lõi:
+Hệ thống áp dụng **Domain-Driven Design (DDD)** với các nguyên tắc cốt lõi:
 
-1. **Ranh Giới Module Rõ Ràng (Clear Module Boundaries):** Mỗi module sở hữu trọn vẹn một domain nghiệp vụ cụ thể (Auth, Queue, Catalog, Booking, Order, Payment, Ticket, Review, Notification, Reporting). Các module KHÔNG được gọi trực tiếp vào class của nhau — mọi tương tác phải thông qua **Interface hợp đồng (Module API Interface)** được định nghĩa công khai.
+1. **Ranh Giới Module Rõ Ràng (Clear Module Boundaries):** Mỗi module sở hữu trọn vẹn một domain nghiệp vụ cụ thể. Các module KHÔNG gọi trực tiếp vào class của nhau — mọi tương tác qua **Module API Interface** công khai.
 
-2. **Giao Tiếp Nội Bộ Qua JVM (In-Process Method Calls):** Thay vì gRPC/HTTP qua mạng, các module giao tiếp trực tiếp qua lời gọi hàm trong JVM — **độ trễ 0ms**, không overhead serialization, không cần Service Discovery.
+2. **Tách Biệt Luồng Read / Write / Async (CQRS-lite):**
+   - **Read API:** Đọc cache hoặc readable secondary qua read pool khi dữ liệu cho phép.
+   - **Write API (Sync):** Ghi giao dịch ACID vào SQL Server Primary — blocking, có kết quả ngay.
+   - **Read-your-write:** Sau thao tác ghi, các lần đọc phụ thuộc kết quả đó đi Primary tối đa 5 giây; cache TTL không thay thế quy tắc này (D-013).
+   - **Write API (Async):** Đẩy message vào Queue — non-blocking, xử lý nền.
 
-3. **Cơ Sở Dữ Liệu Chia Sẻ Có Kiểm Soát (Controlled Shared Database):** Tất cả module dùng chung một MySQL 8.0 Instance, nhưng mỗi module chỉ được phép **WRITE** vào bảng thuộc domain mình. Module khác muốn đọc dữ liệu chéo phải gọi qua Interface API — không JOIN bảng chéo module.
+3. **Giao Dịch ACID Trên Luồng Sync:** SQL Server transaction bao các thay đổi giao dịch trong database. Redis lock nằm ngoài transaction DB; nếu một bước thất bại, service phải chạy bù/trả khóa và tiến trình đối soát xử lý trạng thái lệch.
 
-4. **Giao Dịch ACID Thực Sự (True ACID Transactions):** Vì cùng trong một JVM và một DB, hệ thống có thể dùng @Transactional của Spring để bao toàn bộ luồng nghiệp vụ trong một giao dịch DB duy nhất, loại bỏ hoàn toàn sự phức tạp của Saga/2PC.
+4. **Message Queue Cho Luồng Async:** RabbitMQ với Dead-Letter Queue (DLQ) và Retry Policy — đảm bảo at-least-once delivery cho Email, Thông báo, Hoàn tiền.
 
-5. **Bất Đồng Bộ Nội Bộ (Internal Async via Spring Events):** Các tác vụ không yêu cầu kết quả tức thì (gửi email, push notification, export báo cáo) sử dụng ApplicationEventPublisher + @Async thay vì Apache Kafka — đơn giản hơn, không cần broker riêng biệt.
+5. **Redis Cho Tốc Độ Cực Cao:** Seat Lock (SET NX EX 600), Virtual Queue (Sorted Set), Rate Limit Counter — giảm tải đọc và điều phối giữ ghế; SQL Server vẫn là nguồn sự thật giao dịch.
 
 ---
 
-## 2. Cấu Trúc Package Dự Án (Project Package Structure)
+## 2. Cấu Trúc Dự Án (Project Structure)
 
-Toàn bộ ứng dụng được đóng gói trong một project Spring Boot 3 duy nhất:
+### 2.1. Monolith Application (`ticket-platform/`)
 
 ```
 com.ticketplatform/
-├── TicketPlatformApplication.java        ← Main entry point
+├── TicketPlatformApplication.java        ← Main entry point (@SpringBootApplication)
+│
 ├── shared/                               ← Thành phần dùng chung
 │   ├── exception/                        ← GlobalExceptionHandler, AppException
 │   ├── response/                         ← ApiResponse<T> wrapper chuẩn
-│   ├── security/                         ← JwtFilter, SecurityConfig
-│   ├── event/                            ← ApplicationEvent interfaces
-│   └── util/                             ← DateUtils, QRCodeUtils
-├── auth/                                 ← MODULE 1: Auth & Account
+│   ├── security/                         ← JwtFilter, SecurityConfig, RateLimitFilter
+│   ├── event/                            ← ApplicationEvent (để publish sang Queue)
+│   └── util/                             ← DateUtils, QRCodeUtils, PaginationUtils
+│
+├── auth/                                 ← MODULE 1: Auth & Account + Queue Gate
 │   ├── api/AuthModuleApi.java
-│   ├── controller/AuthController.java
+│   ├── controller/AuthController.java    ← /api/v1/auth/* (login, register, refresh)
+│   ├── controller/QueueController.java   ← /api/v1/queue/* (enter, status, token)
 │   ├── service/AuthService.java
-│   ├── repository/UserRepository.java
-│   ├── domain/User.java
-│   └── dto/
-├── queue/                                ← MODULE 2: Waiting Room & Queue
-├── concert/                              ← MODULE 3: Concert & Catalog
-├── booking/                              ← MODULE 4: Booking & Seat Reservation
-├── order/                                ← MODULE 5: Order & Checkout
-├── payment/                              ← MODULE 6: Payment & Settlement
-├── ticket/                               ← MODULE 7: Ticket & Check-In
-├── review/                               ← MODULE 8: Review & Social
-├── notification/                         ← MODULE 9: Notification Engine
-└── reporting/                            ← MODULE 10: Analytics & Reporting
+│   ├── service/VirtualQueueService.java  ← Redis Sorted Set, Leaky Bucket 5K CCU
+│   └── domain/{User, UserSession, Role}.java
+│
+├── concert/                              ← MODULE 2: Concert & Catalog (READ-heavy)
+│   ├── api/ConcertModuleApi.java
+│   ├── controller/ConcertController.java ← /api/v1/concerts/* (READ API)
+│   ├── service/ConcertService.java       ← readOnly transaction → routing layer chọn secondary hoặc Primary theo chính sách
+│   └── domain/{Concert, Venue, Artist, TicketZone, Seat}.java
+│
+├── booking/                              ← MODULE 3: Booking & Seat Reservation (WRITE SYNC)
+│   ├── api/BookingModuleApi.java
+│   ├── controller/BookingController.java ← /api/v1/seats/hold, /release
+│   ├── service/BookingService.java       ← Redis SETNX + @Transactional SQL Server
+│   └── domain/{SeatHold}.java
+│
+├── order/                                ← MODULE 4: Order & Checkout (WRITE SYNC)
+│   ├── api/OrderModuleApi.java
+│   ├── controller/OrderController.java   ← /api/v1/orders/*
+│   ├── service/OrderService.java
+│   └── domain/{Order, OrderItem}.java
+│
+├── payment/                              ← MODULE 5: Payment & Settlement (WRITE SYNC + ASYNC)
+│   ├── api/PaymentModuleApi.java
+│   ├── controller/PaymentController.java ← /api/v1/payments/*, /webhook/vnpay, /webhook/momo
+│   ├── service/PaymentService.java       ← IPN verify + @Transactional update
+│   ├── producer/RefundEventProducer.java ← Publish "refund.process" → Queue (ASYNC)
+│   └── domain/{PaymentTransaction, Refund, Settlement}.java
+│
+├── ticket/                               ← MODULE 6: Ticket & Check-In (WRITE SYNC)
+│   ├── api/TicketModuleApi.java
+│   ├── controller/TicketController.java  ← /api/v1/tickets/*, /check-in
+│   ├── service/TicketService.java        ← Sinh QR JWT, soát vé
+│   └── domain/{Ticket, CheckinLog}.java
+│
+├── notification/                         ← MODULE 7: Notification Producer (ASYNC)
+│   ├── producer/NotificationProducer.java ← Publish "notification.send" → Queue
+│   └── event/PaymentSuccessEvent.java
+│
+├── review/                               ← MODULE 8: Review & Social (READ/WRITE)
+│   ├── api/ReviewModuleApi.java
+│   ├── controller/ReviewController.java
+│   └── domain/{Review, ReviewReport}.java
+│
+└── reporting/                            ← MODULE 9: Reporting & Analytics (READ ONLY)
+    ├── controller/ReportController.java  ← /api/v1/reports/*
+    ├── service/ReportingService.java     ← readOnly transaction → routing layer chọn secondary hoặc Primary theo chính sách
+    └── dto/                              ← RevenueReportDto, TicketSalesDto
+```
+
+### 2.2. Worker Application (`ticket-worker/`) — Process Riêng Biệt
+
+```
+com.ticketplatform.worker/
+├── TicketWorkerApplication.java
+├── notification/
+│   ├── NotificationConsumer.java    ← @RabbitListener("notification.send")
+│   └── EmailSender.java             ← SendGrid / AWS SES API
+├── refund/
+│   ├── RefundConsumer.java          ← @RabbitListener("refund.process")
+│   └── RefundProcessor.java         ← Gọi VNPay Refund API, cập nhật SQL Server
+└── cancellation/
+    ├── OrderCancellationConsumer.java ← @RabbitListener("order.cancel")
+    └── CancellationService.java
 ```
 
 ---
 
-## 3. Danh Mục Module & Ranh Giới Nghiệp Vụ (Module Inventory & Boundaries)
+## 3. Danh Mục Module & Ranh Giới Nghiệp Vụ
 
-| # | Module | Package | Trách nhiệm cốt lõi | Bảng DB sở hữu (WRITE) | Interface công khai |
+| # | Module | Package | Luồng | Trách nhiệm cốt lõi | Bảng DB sở hữu |
 |---|---|---|---|---|---|
-| 1 | **Auth & Account** | `com.ticketplatform.auth` | Đăng ký, đăng nhập, JWT RS256, OAuth2, RBAC | `users`, `user_credentials`, `user_sessions`, `roles` | `AuthModuleApi` |
-| 2 | **Waiting Room & Queue** | `com.ticketplatform.queue` | Hàng chờ ảo (Redis Sorted Sets), cấp Queue Access Token | Redis + `queue_admissions` | `QueueModuleApi` |
-| 3 | **Concert & Catalog** | `com.ticketplatform.concert` | Quản lý concert, nghệ sĩ, khán đài, zones, duyệt sự kiện | `concerts`, `venues`, `artists`, `ticket_zones` | `ConcertModuleApi` |
-| 4 | **Booking & Seat Reservation** | `com.ticketplatform.booking` | Giữ ghế phân tán Redis Lock (SETNX EX 600), cập nhật trạng thái ghế | `seats`, `seat_holds` | `BookingModuleApi` |
-| 5 | **Order & Checkout** | `com.ticketplatform.order` | Vòng đời đơn hàng, áp voucher, tính hóa đơn | `orders`, `order_items`, `vouchers` | `OrderModuleApi` |
-| 6 | **Payment & Settlement** | `com.ticketplatform.payment` | Tích hợp VNPay/MoMo, nhận IPN webhook, hoàn tiền, đối soát | `payment_transactions`, `refunds`, `settlements` | `PaymentModuleApi` |
-| 7 | **Ticket & Check-In** | `com.ticketplatform.ticket` | Phát hành Dynamic QR vé, soát vé tại cổng, chống gian lận | `tickets`, `checkin_logs` | `TicketModuleApi` |
-| 8 | **Review & Social** | `com.ticketplatform.review` | Đánh giá sao, bình luận (chỉ Verified Attendees) | `reviews`, `review_reports` | `ReviewModuleApi` |
-| 9 | **Notification Engine** | `com.ticketplatform.notification` | Gửi Email, Push, SMS, In-App — bất đồng bộ qua @Async | `notification_logs`, `notification_templates` | *(Internal Listener)* |
-| 10 | **Analytics & Reporting** | `com.ticketplatform.reporting` | Tổng hợp doanh thu, xuất Excel/PDF báo cáo (read-only) | *(READ ONLY)* | `ReportingModuleApi` |
+| 1 | **Auth & Queue** | `auth` | Sync | JWT/OAuth2, RBAC, Phòng chờ ảo 5K CCU | `users`, `user_credentials`, `user_sessions`, `roles` |
+| 2 | **Concert & Catalog** | `concert` | Read | Xem/lọc concert, nghệ sĩ, sơ đồ ghế | `concerts`, `venues`, `artists`, `ticket_zones`, `seats` |
+| 3 | **Booking** | `booking` | Write Sync | Giữ ghế (≤4 ghế), Redis Lock 10 phút | `seat_holds` |
+| 4 | **Order** | `order` | Write Sync | Tạo đơn, tính hóa đơn snapshot; discount_amount = 0 theo D-031 | `orders`, `order_items`` |
+| 5 | **Payment & Settlement** | payment | Write Sync + Async | IPN, refund, đối soát, lập và phê duyệt settlement | payment_transactions, refunds, organizer_settlements, settlement_entries |
+| 6 | **Ticket** | `ticket` | Write Sync | Phát hành QR vé, soát vé cổng check-in | `tickets`, `checkin_logs` |
+| 7 | **Notification** | `notification` | Async Producer | Publish event sang Queue (Email/Push/In-App) | *(Queue Producer)* |
+| 8 | **Review** | `review` | Read/Write | Đánh giá sao, bình luận (Verified Attendees) | `reviews`, `review_reports` |
+| 9 | **Reporting** | `reporting` | Read Only | Báo cáo doanh thu, xuất Excel/PDF | *(read pool → readable secondary, nếu topology D-026 hỗ trợ)* |
+
+<!-- BEGIN MERMAID DIAGRAM DESIGN-MODULE-MAP -->
+### Ranh giới module và luồng giao tiếp
+
+```mermaid
+flowchart LR
+  subgraph MONO["ticket-platform — one Spring Boot JVM / Modular Monolith"]
+    auth["Auth & Queue"]
+    catalog["Concert & Catalog"]
+    booking["Booking"]
+    order["Order & Checkout"]
+    payment["Payment & Settlement"]
+    ticket["Ticket & Check-in"]
+    notice["Notification Producer"]
+    report["Reporting"]
+    catalog -->|module interface| booking
+    booking -->|hold token / module API| order
+    order -->|checkout contract| payment
+    payment -->|same-process transaction calls| order
+    payment -->|issue tickets| ticket
+    payment -->|publish after successful payment| notice
+  end
+  redis["Redis<br/>queue, locks, rate limits"]
+  sql[("SQL Server<br/>module-owned tables, shared database")]
+  broker["Message broker<br/>RabbitMQ baseline per D-025"]
+  subgraph WORKER["ticket-worker — separate process"]
+    consumers["Notification / refund / order-cancel consumers"]
+  end
+  auth <--> redis
+  booking <--> redis
+  auth --> sql
+  catalog --> sql
+  booking --> sql
+  order --> sql
+  payment --> sql
+  ticket --> sql
+  report --> sql
+  notice --> broker --> consumers
+  consumers --> sql
+```
+<!-- END MERMAID DIAGRAM DESIGN-MODULE-MAP -->
+
 
 ---
 
-## 4. Cơ Chế Giao Tiếp Giữa Các Module
+## 4. Cơ Chế Giao Tiếp (Communication Patterns)
 
-### 4.1. Đồng Bộ — Gọi hàm trực tiếp qua Interface
-
-Module A inject ModuleBApi (không inject trực tiếp Service của module khác):
+### 4.1. Sync — Gọi Module Qua Interface (Write API)
 
 ```java
-// BookingService gọi Concert Module qua interface
+// BookingService gọi Concert Module qua Interface (cùng JVM)
 @Service
 @RequiredArgsConstructor
 public class BookingService implements BookingModuleApi {
-    private final ConcertModuleApi concertApi; // Gọi qua Interface
-    private final RedisTemplate<String, String> redisTemplate;
 
-    @Transactional
+    private final ConcertModuleApi concertApi;  // Inject Interface
+    private final RedisTemplate<String, String> redis;
+
+    @Transactional  // ACID: Redis SETNX + INSERT seat_holds cùng lúc
     public SeatHoldResponse holdSeat(Long userId, Long seatId) {
-        SeatInfo info = concertApi.getSeatInfo(seatId);
-        boolean locked = redisTemplate.opsForValue()
+        SeatInfo info = concertApi.getSeatInfo(seatId);  // Gọi Concert Module
+
+        boolean locked = redis.opsForValue()
             .setIfAbsent("seat:lock:" + seatId, userId.toString(), Duration.ofSeconds(600));
         if (!locked) throw new SeatAlreadyHeldException(seatId);
-        return SeatHoldResponse.from(seatRepository.save(new SeatHold(userId, seatId)));
+
+        return SeatHoldResponse.from(seatHoldRepo.save(new SeatHold(userId, seatId)));
     }
 }
 ```
 
-### 4.2. Bất Đồng Bộ — Spring Application Events thay Kafka
+### 4.2. Async — Publish Message Vào Queue (Write API Async)
 
 ```java
-// PaymentService phát event sau khi IPN thành công
+// PaymentService publish event sau khi IPN xác nhận thành công
 @Transactional
 public void handleIpnCallback(VnpayIpnRequest ipn) {
     validateSignature(ipn);
     paymentRepo.updateStatus(ipn.getTxnRef(), PaymentStatus.PAID);
-    orderApi.markOrderPaid(ipn.getOrderId());      // Đồng bộ, cùng transaction
-    ticketApi.issueTicket(ipn.getOrderId());        // Đồng bộ, cùng transaction
-    eventPublisher.publishEvent(                    // Bất đồng bộ, ngoài transaction
-        new PaymentSuccessEvent(ipn.getOrderId(), ipn.getUserId()));
+    orderApi.markOrderPaid(ipn.getOrderId());     // Đồng bộ — cùng transaction
+    ticketApi.issueTicket(ipn.getOrderId());      // Đồng bộ — cùng transaction
+
+    // COMMIT transaction DB — rồi mới publish async
+    notificationProducer.sendOrderPaidEvent(ipn.getOrderId(), ipn.getUserId());
 }
 
-// NotificationListener xử lý bất đồng bộ
-@Async("notificationExecutor")
-@EventListener
-public void onPaymentSuccess(PaymentSuccessEvent event) {
-    emailService.sendTicketConfirmation(event.getUserId(), event.getOrderId());
-    pushService.sendPush(event.getUserId(), "Vé của bạn đã sẵn sàng!");
+// NotificationProducer — publish sang RabbitMQ
+@Component
+@RequiredArgsConstructor
+public class NotificationProducer {
+    private final RabbitTemplate rabbitTemplate;
+
+    public void sendOrderPaidEvent(Long orderId, Long userId) {
+        rabbitTemplate.convertAndSend(
+            "notification.exchange",
+            "notification.send",
+            new NotificationMessage(orderId, userId, NotificationType.PAYMENT_SUCCESS)
+        );
+    }
+}
+```
+
+### 4.3. Worker Consumer — Xử Lý Message Từ Queue
+
+```java
+// Worker Application — lắng nghe Queue và gửi thông báo
+@RabbitListener(queues = "notification.send")
+public void onNotificationMessage(NotificationMessage msg) {
+    try {
+        emailSender.sendTicketConfirmation(msg.getUserId(), msg.getOrderId());
+        pushService.sendPush(msg.getUserId(), "Vé của bạn đã sẵn sàng!");
+    } catch (Exception e) {
+        // Retry 3 lần với exponential backoff
+        // Sau 3 lần → Dead-Letter Queue "notification.dlq"
+        throw new AmqpRejectAndDontRequeueException("Retry via DLQ", e);
+    }
 }
 ```
 
 ---
 
-## 5. Quản Lý Giao Dịch ACID (Không Cần Saga Pattern)
+## 5. Quản Lý Giao Dịch (Transaction Boundaries)
 
-Toàn bộ luồng đặt vé được bao trong **một giao dịch ACID duy nhất**:
+### Luồng Happy Path — Đặt Vé Thành Công
 
 ```
-[Người dùng nhấn "Đặt vé & Thanh toán"]
-        ↓
-[@Transactional bắt đầu — một giao dịch DB duy nhất]
-  1. BookingService.holdSeat()   → SETNX Redis + INSERT seat_holds
-  2. OrderService.createOrder()  → INSERT orders (PENDING) + order_items
-  3. PaymentService.initPayment()→ INSERT payment_transactions (PENDING)
-[@Transactional COMMIT (hoặc ROLLBACK toàn bộ nếu có lỗi)]
-        ↓
-[Client redirect → VNPay → thanh toán]
-        ↓
-[IPN Webhook → @Transactional mới]
-  4. UPDATE payment_transactions → PAID
-  5. OrderService.markOrderPaid() → UPDATE orders → PAID
-  6. TicketService.issueTicket() → INSERT tickets + QR JWT
+[@Transactional BẮT ĐẦU]
+  1. Redis SETNX "seat:lock:{id}" NX EX 600     ← Atomic seat lock
+  2. INSERT seat_holds                            ← SQL Server Primary
+  3. INSERT orders (status=PENDING)              ← SQL Server Primary
+  4. INSERT order_items                           ← SQL Server Primary
+  5. INSERT payment_transactions (status=PENDING) ← SQL Server Primary
+[@Transactional COMMIT — tất cả hoặc không gì cả]
+
+Client redirect → VNPay → Thanh toán
+
+[@Transactional BẮT ĐẦU — IPN Callback]
+  6. UPDATE payment_transactions → PAID          ← SQL Server Primary
+  7. UPDATE orders → PAID                        ← SQL Server Primary
+  8. INSERT tickets (+ QR JWT token)             ← SQL Server Primary
 [@Transactional COMMIT]
-        ↓
-[async] PaymentSuccessEvent → Email + Push Notification
+
+[Sau COMMIT — Non-blocking]
+  9. Publish "notification.send" → RabbitMQ     ← Fire & Forget
+     Worker nhận → SendGrid email + FCM push
+```
+
+### Luồng Rollback — Timeout Thanh Toán (10 phút)
+
+```
+[Scheduler @Scheduled mỗi 30 giây]
+  Quét orders WHERE status=PENDING AND expires_at <= SYSUTCDATETIME()
+  [@Transactional]
+    UPDATE orders → CANCELLED
+    DELETE seat_holds WHERE order_id=?
+    Redis DEL "seat:lock:{seatId}"              ← Giải phóng seat lock
+  [COMMIT]
+  Publish "order.cancel" → Queue → Worker → Gửi thông báo hủy đơn
 ```
 
 ---
 
-## 6. Vai Trò Redis Trong Modular Monolith
+## 6. Vai Trò Redis Trong Kiến Trúc
 
-| Mục đích | Cơ chế | Chi tiết |
-|---|---|---|
-| **Hàng chờ ảo** | Redis Sorted Sets | `ZADD queue:{concertId} {score} {userId}` |
-| **Khóa giữ ghế** | `SETNX EX 600` | Phòng double-booking, TTL 10 phút |
-| **Cache concert** | Redis String/Hash | Cache `concert:{id}` 5 phút — giảm load MySQL |
-| **Blacklist JWT** | Redis Set | Lưu `jti` token bị thu hồi (logout) |
-| **Rate Limit** | Redis INCR + EXPIRE | Đếm request theo `IP:minute` |
-
----
-
-## 7. So Sánh: Modular Monolith vs Microservices
-
-| Tiêu chí | Microservices (cũ) | Modular Monolith (hiện tại) |
-|---|---|---|
-| **Triển khai** | 10 Docker images + K8s + Helm | 1 image + Redis + MySQL (3 containers) |
-| **Giao dịch** | Saga Pattern, eventual consistency | @Transactional ACID, nhất quán tức thì |
-| **Độ trễ nội bộ** | gRPC qua mạng: 1–5ms | Gọi hàm JVM: 0ms |
-| **Debug** | Distributed tracing, nhiều log stream | 1 log stream, stack trace đầy đủ |
-| **RAM** | ~20–40 GB (10 services × 2–4 GB) | ~4–8 GB (1 JVM) |
-| **Message Broker** | Apache Kafka (3 brokers) | Spring @Async + ApplicationEventPublisher |
-| **Onboard dev mới** | Phức tạp — nhiều repo, nhiều service | Đơn giản — 1 project Maven/Gradle |
+| Mục đích | Key Pattern | TTL | Ghi chú |
+|---|---|---|---|
+| **Virtual Queue** | `queue:{concertId}` | Đến hết giờ mở bán | ZADD score=random shuffle |
+| **Queue Timeout** | `queue:timeout:{userId}` | 120 giây | Hết hạn phiên → thu hồi queue slot; seat hold đã tạo tiếp tục theo TTL 600 giây (D-002) |
+| **Seat Lock** | `seat:lock:{seatId}` | 600 giây | SET NX EX — atomic, chống double-booking |
+| **Concert Cache** | `concert:{id}` | 300 giây | HGETALL — giảm read SQL Server |
+| **JWT Blacklist** | `jwt:blacklist` (Set) | Per-token TTL | SADD jti khi logout |
+| **Rate Limit** | `ratelimit:{ip}:{min}` | 60 giây | INCR + EXPIRE |
 
 ---
 
-## 8. Cấu Hình Spring Boot (application.yml)
+## 7. Cấu Hình Spring Boot & Broker (application.yml)
 
 ```yaml
+# Illustrative SQL Server JDBC configuration; use separate HikariDataSource beans
+# app.datasource.write.jdbc-url: jdbc:sqlserver://${DB_PRIMARY_HOST}:1433;databaseName=${DB_NAME};encrypt=true
+# app.datasource.read.jdbc-url: jdbc:sqlserver://${DB_AG_LISTENER}:1433;databaseName=${DB_NAME};applicationIntent=ReadOnly;encrypt=true;trustServerCertificate=false
 spring:
   application:
     name: ticket-platform
+
   datasource:
-    url: jdbc:mysql://mysql-host:3306/ticketdb?useSSL=true&characterEncoding=UTF-8
+    url: jdbc:sqlserver://${DB_PRIMARY_HOST}:1433;databaseName=${DB_NAME};encrypt=true;trustServerCertificate=false
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
     hikari:
-      maximum-pool-size: 50
-      minimum-idle: 10
+      maximum-pool-size: 50  # illustrative only; benchmark aggregate pool budget (D-030)
+      minimum-idle: 10  # illustrative only
       connection-timeout: 3000
+
   data:
     redis:
       cluster:
-        nodes:
-          - redis-node-1:6379
-          - redis-node-2:6379
-          - redis-node-3:6379
+        nodes: [ redis-1:6379, redis-2:6379, redis-3:6379 ]
       password: ${REDIS_PASSWORD}
-  task:
-    execution:
-      pool:
-        core-size: 10
-        max-size: 50
-        queue-capacity: 500
+
+  rabbitmq:
+    host: ${RABBITMQ_HOST}
+    port: 5672
+    username: ${RABBITMQ_USERNAME}
+    password: ${RABBITMQ_PASSWORD}
+    listener:
+      simple:
+        retry:
+          enabled: true
+          max-attempts: 3
+          initial-interval: 1000
+          multiplier: 2.0   # Exponential backoff
+
 server:
   port: 8080
   tomcat:

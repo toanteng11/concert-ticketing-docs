@@ -6,7 +6,7 @@ Hệ thống bán vé sự kiện âm nhạc trực tuyến (Concert Ticketing P
 
 - **Ngôn ngữ phát triển cốt lõi (Core Backend Language):** **Java (Java 17 / Java 21 LTS)** với nền tảng **Spring Boot 3**.
 - **Môi trường soạn thảo mã nguồn (Code Editor / IDE):** **Visual Studio Code (VS Code)** với bộ tiện ích mở rộng Java & Spring Enterprise.
-- **Hệ quản trị cơ sở dữ liệu quan hệ (Primary RDBMS):** **MySQL (MySQL 8.0 / 8.4 LTS)** sử dụng lưu trữ **InnoDB Engine** giao dịch ACID nghiêm ngặt.
+- **Hệ quản trị cơ sở dữ liệu quan hệ (Primary RDBMS):** Microsoft SQL Server 2025 Enterprise cho production theo D-026; SQL Server 2025 Developer chỉ cho local. License, sizing và HA phải được DBA/Finance xác nhận trước go-live.
 - **Công cụ thiết kế giao diện người dùng (UI/UX Design):** **Figma** (Design System, Wireframes & Interactive Prototypes).
 - **Công cụ thiết kế sơ đồ mô hình hóa (UML Modeling):** **Astah (Astah Professional / Astah UML)** để vẽ toàn bộ sơ đồ Use Case, Sequence, State Machine, Class Diagram.
 - **Công cụ kiểm thử & Kiểm chuẩn API (API Testing):** **Postman** (Postman Collections, Pre-request Scripts, Automated Test Assertions).
@@ -22,13 +22,14 @@ Hệ thống bán vé sự kiện âm nhạc trực tuyến (Concert Ticketing P
 |---|---|---|---|
 | **Ngôn ngữ Backend chính** | **Java** | **Java 17 LTS / Java 21 LTS** | Ngôn ngữ hướng đối tượng mạnh mẽ, kiểu tĩnh an toàn (Type-safe), quản lý bộ nhớ JVM tối ưu, hỗ trợ Virtual Threads (Project Loom) xử lý hàng trăm nghìn tác vụ đồng thời |
 | **Framework Backend** | **Spring Boot** | **Spring Boot 3.2+** | Framework tiêu chuẩn doanh nghiệp: Spring Web MVC, Spring Data JPA / Hibernate, Spring Security (JWT / OAuth2), Spring Cloud |
-| **Cơ Sở Dữ Liệu Quan Hệ** | **MySQL** | **MySQL 8.0 / 8.4 LTS (InnoDB)** | Hỗ trợ lưu trữ giao dịch ACID tuyệt đối, khóa cấp dòng (`SELECT ... FOR UPDATE`), kiểu dữ liệu JSON, Partitioning, bảo vệ chống bán trùng vé |
-| **Quản Lý Kết Nối Database**| **HikariCP** | Tích hợp sẵn trong Spring Boot | Thư viện Connection Pool tốc độ cao nhất trong hệ sinh thái Java, ghép hàng nghìn yêu cầu về nhóm kết nối MySQL an toàn |
+| **Cơ Sở Dữ Liệu Quan Hệ** | **Microsoft SQL Server 2025 Enterprise** | Production theo D-026; Developer chỉ local | RDBMS giao dịch ACID; transaction amounts là số nguyên VND; production license/sizing cần DBA/Finance sign-off; không partition trong baseline theo D-028 |
+| **Quản Lý Kết Nối Database**| **HikariCP** | Tích hợp sẵn trong Spring Boot | Thư viện Connection Pool tốc độ cao nhất trong hệ sinh thái Java, tách connection pool ghi tới Primary và pool read-intent tới readable secondary khi topology được chọn |
 | **Bộ Nhớ Đệm & Khóa Ghế** | **Redis** | **Redis 7.2+** | Lưu trữ In-Memory: Chạy Lua Script khóa ghế nguyên tử (`SETNX EX 600`), cấu trúc Sorted Sets quản lý hàng chờ ảo và rate limit |
-| **Message Streaming Broker** | **Apache Kafka** | **Kafka 3.7+ (KRaft mode)** | Xương sống truyền sự kiện bất đồng bộ (`order.paid`, `seat.held`, `ticket.issued`), giải phóng tải cho Backend và đảm bảo gửi thông báo tin cậy |
+| **Message Broker** | **RabbitMQ** | Durable quorum queues, publisher confirms, retry + DLQ | Async events/jobs; consumer idempotent; transactional outbox trong SQL Server; không dùng Kafka trong baseline (D-025) |
 | **Frontend Web Portal** | **React / Next.js (TypeScript)**| Next.js 14+ | Tải trang cực nhanh, tối ưu hóa SEO cho sự kiện, giao tiếp RESTful API & WebSocket cập nhật trạng thái ghế |
 | **Ứng Dụng Di Động** | **Flutter / React Native** | Flutter 3.22+ | Xây dựng ứng dụng iOS & Android từ một mã nguồn; tích hợp hiển thị mã Dynamic QR Code tự đổi mỗi 30s |
-| **Đóng Gói Ứng Dụng** | **Docker** | **Docker Engine 26+ / Compose v2** | Đóng gói toàn bộ ứng dụng Java, MySQL, Redis, Kafka thành các container bất biến, đảm bảo môi trường Dev và Production giống nhau 100% |
+| **NoSQL** | **Không có trong baseline** | — | Redis chỉ giữ state/lock có TTL; SQL Server lưu giao dịch, audit và outbox; ELK chỉ là operational logs theo D-029 |
+| **Đóng gói ứng dụng** | **Docker Engine / Compose** | SQL Server 2025 Developer local; SQL Server 2025 Enterprise production; RabbitMQ theo D-025 |
 
 ---
 
@@ -47,7 +48,7 @@ Dự án sử dụng **VS Code** làm IDE phát triển thống nhất cho toàn
 **Astah** là công cụ mô hình hóa trực quan được chỉ định để người thiết kế chuyển hóa toàn bộ tài liệu BA thành các sơ đồ kỹ thuật chuẩn UML 2.5:
 - **Use Case Diagram:** Vẽ sơ đồ tương tác giữa 4 Actor (Customer, Organizer, Admin, Staff) với 15 Use Cases cốt lõi và các quan hệ `<<include>>`, `<<extend>>`.
 - **Sequence Diagram:** Vẽ luồng thông điệp thời gian thực cho:
-  - Khóa giữ ghế phân tán (Client $\rightarrow$ API Gateway $\rightarrow$ Booking Service $\rightarrow$ Redis $\rightarrow$ MySQL).
+  - Khóa giữ ghế phân tán (Client $\rightarrow$ API Gateway $\rightarrow$ Booking Service $\rightarrow$ Redis $\rightarrow$ SQL Server Primary).
   - Luồng thanh toán đối soát VNPay/MoMo Webhook Callback.
   - Luồng giải mã Dynamic QR soát vé tại cổng trong $\le 500\text{ ms}$.
 - **State Machine Diagram:** Vẽ 5 cỗ máy trạng thái: Vòng đời Concert (6 trạng thái), Vòng đời Ghế (`AVAILABLE` $\leftrightarrow$ `HELD` $\rightarrow$ `SOLD`), Vòng đời Đơn hàng, Vòng đời Vé và Trạng thái Thanh toán.
@@ -116,28 +117,36 @@ Dự án sử dụng **VS Code** làm IDE phát triển thống nhất cho toàn
     docker compose up -d
     ```
   - Bao gồm các dịch vụ được cấu hình sẵn mạng nội bộ:
-    1. `mysql-db`: MySQL 8.0 (Port 3306, cấu hình sẵn database `concert_ticketing_db`, user/pass, volume lưu trữ bền vững).
-    2. `redis-cache`: Redis 7.2 (Port 6379, hỗ trợ AOF & RDB snapshot).
-    3. `kafka-broker`: Apache Kafka KRaft mode (Port 9092).
+    1. sqlserver: SQL Server 2025 Developer (chỉ local, cổng 1433); database và application login được tạo qua migration/init task.
+    2. redis: Redis 7.2 (cổng 6379, mật khẩu qua secret/env).
+    3. RabbitMQ minh họa broker (cổng 5672; broker chuẩn theo D-025 (RabbitMQ)).
     4. `mailhog`: Giả lập SMTP Server cục bộ có Web UI kiểm tra email xác nhận vé (Port 8025).
-    5. `backend-api`: Ứng dụng Java Spring Boot kết nối tự động tới các dịch vụ trên.
+    5. backend-api và worker: ứng dụng Spring Boot; Không triển khai NoSQL trong baseline theo D-029.
 
 ---
 
 ## 4. Tóm Tắt Quy Trình Phối Hợp Giữa Các Công Cụ (Integrated Workflow)
 
+<!-- BEGIN MERMAID DIAGRAM CONVERT-05_Technology_Stack_And_Development_Tools -->
+### Tool collaboration workflow
+
+```mermaid
+flowchart TD
+  jira1["Jira — create and refine BA requirement"]
+  design["Parallel design work"]
+  figma["Figma — UI prototype"]
+  astah["Astah — Use Case, Sequence, ERD"]
+  code["VS Code — Java / Spring Boot implementation"]
+  local["Docker Compose — local environment and SQL Server"]
+  api["Postman — API collection checks"]
+  github["GitHub PR — source review"]
+  actions["GitHub Actions — build and test"]
+  uat["Jira status update and UAT handoff"]
+  jira1 --> design
+  design --> figma
+  design --> astah
+  figma --> code
+  astah --> code
+  code --> local --> api --> github --> actions --> uat --> jira1
 ```
-[Khởi tạo Yêu cầu BA trên Jira] 
-       ↓ 
-[Thiết kế Prototype trên Figma]  +  [Vẽ Sơ đồ Kỹ thuật trên Astah (Use Case, Sequence, ERD)]
-       ↓ 
-[Lập trình mã nguồn Java trên VS Code] 
-       ↓ 
-[Chạy thử nghiệm môi trường cục bộ qua Docker / Docker Compose & MySQL 8]
-       ↓ 
-[Kiểm chuẩn API qua Postman Collection Runner]
-       ↓ 
-[Đẩy mã nguồn lên GitHub (PR) → Tự động chạy GitHub Actions Build & Test]
-       ↓ 
-[Cập nhật trạng thái Done trên Jira → Bàn giao kiểm thử nghiệm thu UAT]
-```
+<!-- END MERMAID DIAGRAM CONVERT-05_Technology_Stack_And_Development_Tools -->

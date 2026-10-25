@@ -1,4 +1,4 @@
-﻿# BF01 — Business Flow: Phòng Chờ Ảo & Hàng Chờ Ảo (Waiting Room & Virtual Queue)
+# BF01 — Business Flow: Phòng Chờ Ảo & Hàng Chờ Ảo (Waiting Room & Virtual Queue)
 
 ## 1. Mục Đích
 
@@ -118,7 +118,7 @@ flowchart TD
     H --> I["Tăng active_user_count trên Redis:\nINCR active:seat_selection:{concert_id}"]
     I --> J["User vào khu chọn ghế thành công"]
 
-    B -->|Đã đủ 5.000| K["Chờ đến khi có người rời:\n- Hoàn tất thanh toán\n- Timeout 2 phút inactive\n- Hủy đơn & thoát ra\n\nSub Redis channel: seat_selection_left:{concert_id}"]
+    B -->|Đã đủ 5.000| K["Chờ đến khi có người rời:\n- Hoàn tất thanh toán\n- Không có heartbeat 120 giây; thu hồi token/slot admission, seat hold theo TTL 600 giây độc lập\n- Hủy đơn & thoát ra\n\nSub Redis channel: seat_selection_left:{concert_id}"]
     K --> A
 ```
 

@@ -1,4 +1,4 @@
-﻿# 08 — Quyền Riêng Tư Dữ Liệu, Nhật Ký Kiểm Toán & Lưu Trữ (Data Privacy, Audit & Retention)
+# 08 — Quyền Riêng Tư Dữ Liệu, Nhật Ký Kiểm Toán & Lưu Trữ (Data Privacy, Audit & Retention)
 
 ## 1. Giới Thiệu & Khung Pháp Lý Áp Dụng
 
@@ -53,6 +53,27 @@ Tuân thủ Nghị định 13/2023/NĐ-CP, hệ thống cung cấp đầy đủ 
      WHERE id = :user_id;
      ```
   3. Bản ghi đơn hàng (`orders`) và thanh toán (`payment_transactions`) vẫn được giữ nguyên vẹn về mặt số tiền, ngày giờ và mã tham chiếu ngân hàng để phục vụ kiểm toán tài chính, nhưng không còn bất kỳ mối liên hệ nào với danh tính con người thực tế ngoài đời.
+
+
+<!-- BEGIN MERMAID DIAGRAM NFR-DATA-RIGHTS -->
+### Luồng xử lý quyền của chủ thể dữ liệu
+
+```mermaid
+flowchart TD
+  user["Customer / data subject"] --> consent["Manage or withdraw optional marketing / analytics consent"]
+  user --> request{"Data access or deletion request?"}
+  request -->|access / export| verify["Verify identity and scope"]
+  verify --> package["Package profile, orders, tickets, reviews"]
+  package --> encrypted["Password-protected encrypted ZIP"]
+  encrypted --> email["Send to registered email within 72h"]
+  request -->|deletion| legal{"Statutory retention applies?"}
+  legal -->|yes| pseudonym["Pseudonymize / anonymize retained records"]
+  legal -->|no| purge["Delete eligible personal data"]
+  note["Consent withdrawal affects optional processing; it does not erase records that must be retained for accounting, tax, or security obligations."]
+  legal -.-> note
+```
+<!-- END MERMAID DIAGRAM NFR-DATA-RIGHTS -->
+
 
 ---
 
@@ -114,9 +135,29 @@ Mọi thao tác thay đổi dữ liệu hoặc truy cập thông tin nhạy cả
 
 | Nhóm dữ liệu | Thời gian lưu trữ nóng (Hot Storage) | Thời gian lưu trữ ấm/lạnh (Warm/Cold Archive) | Thời điểm tiêu hủy vĩnh viễn (Permanent Purge) | Căn cứ pháp lý |
 |---|---|---|---|---|
-| **Dữ liệu Đơn hàng, Hóa đơn & Đối soát** | 1 năm trong MySQL 8.0 | 4 năm tiếp theo trong AWS S3 Glacier | Sau đúng **5 năm** kể từ ngày quyết toán thuế | Luật Kế toán & Luật Thuế VN |
-| **Nhật ký Quét Vé Check-In tại Cổng** | 30 ngày trong MySQL 8.0 | 11 tháng tiếp theo trong S3 | Sau **12 tháng** kể từ khi concert kết thúc | Phục vụ đối soát & giải quyết khiếu nại |
-| **Nhật ký Kiểm toán (Audit Logs)** | 1 năm trong MySQL 8.0 | 4 năm trong S3 Object Lock | Sau **5 năm** | Tiêu chuẩn kiểm toán bảo mật |
+| **Dữ liệu Đơn hàng, Hóa đơn & Đối soát** | 1 năm trong SQL Server | 4 năm tiếp theo trong AWS S3 Glacier | Sau đúng **5 năm** kể từ ngày quyết toán thuế | Luật Kế toán & Luật Thuế VN |
+| **Nhật ký Quét Vé Check-In tại Cổng** | 30 ngày trong SQL Server | 11 tháng tiếp theo trong S3 | Sau **12 tháng** kể từ khi concert kết thúc | Phục vụ đối soát & giải quyết khiếu nại |
+| **Nhật ký Kiểm toán (Audit Logs)** | 1 năm trong SQL Server | 4 năm trong S3 Object Lock | Sau **5 năm** | Tiêu chuẩn kiểm toán bảo mật |
 | **Nhật ký Truy cập Mạng (Access Logs / Nginx)** | 30 ngày trong OpenSearch | 60 ngày tiếp theo dạng nén S3 | Sau **90 ngày** | Nghị định quản lý Internet & An ninh mạng |
 | **Phiên làm việc & Token Hàng chờ (Redis)** | 10 phút đến 24 giờ | Không lưu trữ | Tự động hết hạn qua cơ chế Redis TTL | Tối ưu tài nguyên In-Memory |
 
+
+<!-- BEGIN MERMAID DIAGRAM NFR-AUDIT-RETENTION -->
+### Luồng audit bất biến và phân tầng lưu trữ
+
+```mermaid
+flowchart LR
+  action["Privileged access or sensitive change"] --> audit[("SQL Server audit_logs<br/>INSERT only")]
+  audit --> sign["Nightly export and HMAC-SHA256 signature"]
+  sign --> lock["S3 Object Lock<br/>Compliance mode"]
+  lock --> archive["Warm / cold archive per retention schedule"]
+  archive --> purge["Purge only when applicable retention expires"]
+  order["Order / invoice / reconciliation"] --> finance["SQL Server hot 1 year"] --> glacier["S3 Glacier next 4 years"] --> financePurge["Purge after 5 years from tax settlement"]
+  checkin["Gate check-in logs"] --> checkinHot["SQL Server hot 30 days"] --> checkinCold["S3 next 11 months"] --> checkinPurge["Purge 12 months after concert ends"]
+  auditData["Audit logs"] --> auditHot["SQL Server hot 1 year"] --> auditCold["S3 Object Lock next 4 years"] --> auditPurge["Purge after 5 years"]
+  logs["Network access logs"] --> hotLogs["OpenSearch hot 30 days"] --> s3Logs["Compressed S3 60 days"] --> logPurge["Purge after 90 days"]
+  redisData["Redis sessions and queue tokens"] --> redisTTL["TTL 10 minutes to 24 hours<br/>no archive"]
+  note["Apply the table's retention basis and any legal hold; do not treat the visual timeline as overriding statutory requirements."]
+  purge -.-> note
+```
+<!-- END MERMAID DIAGRAM NFR-AUDIT-RETENTION -->

@@ -1,4 +1,6 @@
-﻿# UC07 — Đặt Vé & Thanh Toán (Order Checkout & Payment)
+# UC07 — Đặt Vé & Thanh Toán (Order Checkout & Payment)
+
+> **Phạm vi:** Checkout/thanh toán là baseline. Voucher/discount không thuộc release này theo D-031; discount_amount luôn bằng 0.
 
 ## 1. Thông Tin Chung
 
@@ -20,6 +22,43 @@
 Use case này bao gồm toàn bộ luồng từ khi customer xác nhận chọn ghế đến khi hoàn tất thanh toán và nhận vé điện tử. Đây là luồng tạo ra doanh thu của nền tảng và yêu cầu độ tin cậy tuyệt đối: không mất tiền, không mất ghế, không mất vé.
 
 ---
+
+<!-- BEGIN MERMAID USE-CASE UC07 -->
+### Sơ đồ Use Case (Mermaid)
+
+```mermaid
+flowchart LR
+  customer["👤 Khách hàng"]
+  vnpay["VNPay Gateway"]
+  momo["MoMo Gateway"]
+  subgraph SYS["Concert Ticketing System — UC07"]
+    direction TB
+    checkout(["Tạo đơn PENDING và xác nhận checkout"])
+    startPayment(["Khởi tạo thanh toán"])
+    verify(["Xác minh callback hoặc IPN có chữ ký"])
+    issue(["Phát hành vé khi thanh toán thành công"])
+    reconcile(["Đối soát giao dịch chưa rõ kết quả trước khi thử lại"])
+    late(["Ghi nhận thanh toán đến sau khi hết giữ ghế"])
+  end
+  customer --- checkout
+  checkout -.->|«bao gồm»| startPayment
+  vnpay --- startPayment
+  momo --- startPayment
+  vnpay --- verify
+  momo --- verify
+  verify -.->|«chỉ khi thành công»| issue
+  vnpay --- reconcile
+  momo --- reconcile
+  vnpay --- late
+  momo --- late
+  note["Order/payment idempotent. UNKNOWN được reconcile tại 30s, 5m, 30m; không tạo attempt khác khi chưa rõ kết quả. Late success sau expiry ghi SUCCESS_UNFULFILLED và tự refund 100% sau xác nhận provider theo D-016/D-032. Voucher ngoài baseline theo D-031."]
+  verify -.-> note
+  classDef actor fill:#fff,stroke:#334155,stroke-width:1px
+  classDef provider fill:#f1f5f9,stroke:#64748b,stroke-width:1px
+  class customer actor
+  class vnpay,momo provider
+```
+<!-- END MERMAID USE-CASE UC07 -->
 
 ## 3. Điều Kiện Tiên Quyết (Preconditions)
 
@@ -78,8 +117,8 @@ Use case này bao gồm toàn bộ luồng từ khi customer xác nhận chọn 
 | 1 | IPN thành công đến sau khi `order.status = OUT_TIME` và ghế đã bị người khác mua |
 | 2 | Hệ thống KHÔNG ghi đè ghế đã SOLD của người khác |
 | 3 | `payment_transaction.status = SUCCESS_UNFULFILLED` |
-| 4 | Tự động kích hoạt hoàn tiền 100% ngay lập tức |
-| 5 | Gửi email + SMS xin lỗi với mã giao dịch hoàn tiền |
+| 4 | Sau khi provider reconciliation xác nhận đã thu tiền, tạo logical refund 100% số tiền thực thu với idempotency key; nếu refund result UNKNOWN thì không gửi lại mù |
+| 5 | Gửi IN_APP và push nếu được phép với trạng thái REFUND_PENDING/UNKNOWN; chỉ hiển thị provider refund reference sau khi provider trả mã |
 
 ---
 
@@ -88,8 +127,8 @@ Use case này bao gồm toàn bộ luồng từ khi customer xác nhận chọn 
 | ID | Điều kiện | Xử lý |
 |---|---|---|
 | EX-01 | Đồng hồ 10 phút hết hạn trong khi customer đang ở trang checkout (chưa bấm thanh toán) | Hiện cảnh báo ở giây 60 cuối; khi hết → Hiện "Phiên đã hết hạn"; redirect về sơ đồ ghế |
-| EX-02 | Cổng thanh toán không phản hồi (timeout 30 giây) | Ghi `payment_transaction = FAILED`; thông báo "Cổng thanh toán tạm thời không khả dụng. Vui lòng thử lại hoặc chọn phương thức khác." |
-| EX-03 | Số tiền IPN Webhook không khớp với `order.total_amount` | Ghi cờ `SUSPICIOUS_PAYMENT_FRAUD`; alert team an ninh; không cập nhật đơn hàng |
+| EX-02 | Không nhận response sau 30 giây, kết quả gateway chưa xác định | Ghi payment status UNKNOWN; hiển thị đang xác minh; reconcile tại 30 giây, 5 phút, 30 phút. Không retry/tạo attempt mới khi chưa có xác nhận provider thất bại hoặc void; UNKNOWN quá 30 phút chuyển support queue (D-033) |
+| EX-03 | Số tiền IPN Webhook không khớp với `order.final_amount` | Ghi cờ `SUSPICIOUS_PAYMENT_FRAUD`; alert team an ninh; không cập nhật đơn hàng |
 | EX-04 | Chữ ký HMAC không hợp lệ | Từ chối xử lý; ghi Security Alert; không trả lỗi ra ngoài (trả 200 OK) |
 | EX-05 | Click "Thanh toán" nhiều lần (double submit) | `Idempotency-Key` đảm bảo chỉ tạo 1 đơn; các lần click sau trả về kết quả đơn đã tạo |
 | EX-06 | Customer đóng tab ngay sau khi thanh toán tại cổng nhưng trước khi redirect về | IPN vẫn đến và xử lý đúng; lần sau customer truy cập vào "Đơn hàng của tôi" sẽ thấy đơn `PAID` |
@@ -122,7 +161,7 @@ Use case này bao gồm toàn bộ luồng từ khi customer xác nhận chọn 
 | AC-07-01-01 | Trang checkout hiển thị bảng giá đầy đủ: giá gốc, phí dịch vụ, VAT, tổng cộng; không có phí ẩn | Functional |
 | AC-07-01-02 | Đơn hàng được tạo với `Idempotency-Key`; click nhiều lần không tạo nhiều đơn | Functional |
 | AC-07-01-03 | Từ khi IPN thành công đến khi vé và QR sẵn sàng: < 3 giây | Performance |
-| AC-07-01-04 | Customer nhận email xác nhận có vé đính kèm trong < 30 giây sau thanh toán thành công | Performance |
+| AC-07-01-04 | Sau khi payment được xác nhận, notification được enqueue trong ≤5 giây; trạng thái provider được ghi nhận khi có; không cam kết thời gian chấp nhận/giao của nhà cung cấp bên thứ ba | Performance / Integration |
 | AC-07-01-05 | Thông tin ghế, giá vé trong đơn hàng khớp 100% với những gì hiển thị trên trang checkout | Functional (Critical) |
 
 ---

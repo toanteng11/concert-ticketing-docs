@@ -1,4 +1,4 @@
-﻿# 🎫 Bộ Tài Liệu Phân Tích Nghiệp Vụ Hệ Thống Bán Vé Ca Nhạc Trực Tuyến (Concert Ticketing Business Analysis Documentation)
+# 🎫 Bộ Tài Liệu Phân Tích Nghiệp Vụ Hệ Thống Bán Vé Ca Nhạc Trực Tuyến (Concert Ticketing Business Analysis Documentation)
 
 > **Mục tiêu tối thượng:** Bộ tài liệu Phân tích Nghiệp vụ (Business Analysis - BA) này được xây dựng chuẩn hóa, toàn diện và chặt chẽ, đóng vai trò là **cơ sở dữ liệu đặc tả tiền đề** để các kỹ sư hệ thống, kiến trúc sư phần mềm (Solution Architects), lập trình viên và kiểm thử viên có thể đọc hiểu và trực tiếp vẽ các sơ đồ kỹ thuật:
 > - **Sơ đồ Tổng thể Kiến trúc (System Architecture Diagrams)**
@@ -13,7 +13,7 @@
 
 ## 📑 Bảng Mục Lục & Cấu Trúc Toàn Bộ Dự Án
 
-Toàn bộ hệ thống tài liệu được tổ chức thành **8 phân hệ nghiệp vụ chính (55 tài liệu chi tiết)** theo thứ tự phát triển chuẩn công nghiệp:
+Toàn bộ hệ thống tài liệu được tổ chức thành **8 phân hệ nghiệp vụ chính (57 tài liệu Markdown, tính cả README)** theo thứ tự phát triển chuẩn công nghiệp:
 
 ```
 business-analysis/
@@ -104,13 +104,13 @@ Dự án thống nhất sử dụng bộ công cụ và công nghệ chuẩn hó
 |---|---|---|
 | **Ngôn ngữ Backend chính** | **Java** | **Java 17 / Java 21 LTS**, nền tảng **Spring Boot 3** (Spring Data JPA, Spring Security) |
 | **Công cụ Lập trình (IDE)** | **Visual Studio Code (VS Code)** | Bộ tiện ích Extension Pack for Java, Spring Boot, Docker, GitLens, SonarLint |
-| **Cơ Sở Dữ Liệu (RDBMS)** | **MySQL** | **MySQL 8.0+ (InnoDB Engine)**, giao dịch ACID, khóa cấp dòng `FOR UPDATE` |
+| **Cơ Sở Dữ Liệu (RDBMS)** | **Microsoft SQL Server 2025 Enterprise** | Production Always On AG theo D-026; local development dùng Developer edition; DBA/Finance xác nhận license và sizing trước go-live |
 | **Thiết kế Giao diện (UI/UX)** | **Figma** | Thiết kế Design System, Wireframes, Mockup & Prototype chọn ghế trực quan |
 | **Thiết kế Sơ đồ Kỹ thuật (UML)** | **Astah (Astah Professional / UML)**| Vẽ toàn bộ sơ đồ Use Case, Sequence, State Machine, Class, Component Diagram |
 | **Kiểm thử Giao diện Lập trình** | **Postman** | Postman Collections, biến môi trường, Pre-request Scripts & Test Assertions tự động |
 | **Quản lý Tiến độ Dự án (Agile)**| **Jira (Jira Software)** | Quản lý Sprint, Epics, User Stories (`US-01-01` đến `US-15-03`), Burndown Chart |
 | **Quản lý Mã nguồn (VCS)** | **GitHub** | Lưu trữ mã nguồn, quy trình GitFlow, Pull Request, Code Review, GitHub Actions CI/CD |
-| **Đóng gói & Môi trường Chạy** | **Docker** | Multi-stage Dockerfile cho Java Spring Boot, `docker-compose.yml` chạy MySQL, Redis, Kafka |
+| **Đóng gói & Môi trường Chạy** | **Docker** | Multi-stage Dockerfile cho Java Spring Boot; Compose local dùng SQL Server 2025 Developer, Redis và RabbitMQ; không có NoSQL trong baseline |
 
 ---
 
@@ -121,11 +121,11 @@ Dành cho các thành viên đội ngũ thiết kế, đồ họa kỹ thuật v
 | Sơ đồ cần vẽ trên Astah / Figma | Tài liệu nguồn cần đọc | Dữ liệu đầu vào then chốt |
 |---|---|---|
 | **Use Case Diagram (Astah)** | `UC01` đến `UC15` + `02_Actor_Permissions.md` | Bảng phân quyền RBAC, danh sách Use Case con, quan hệ `<<include>>` và `<<extend>>`. |
-| **Sequence Diagrams (Astah)** | `BF02`, `BF03`, `BF06`, `04_RESTful_API...` | Luồng tương tác tuần tự giữa Client $\rightarrow$ Gateway $\rightarrow$ Java Service $\rightarrow$ Redis $\rightarrow$ MySQL $\rightarrow$ Third-party. |
+| **Sequence Diagrams (Astah)** | `BF02`, `BF03`, `BF06`, `04_RESTful_API...` | Luồng tương tác tuần tự giữa Client $\rightarrow$ Gateway $\rightarrow$ Java Service $\rightarrow$ Redis $\rightarrow$ SQL Server $\rightarrow$ Third-party. |
 | **State Machine Diagrams (Astah)** | `SM01` đến `SM05` | 5 vòng đời: Concert, Ghế (Seat), Đơn hàng (Order), Vé (Ticket) và Thanh toán/Hoàn tiền. |
 | **Activity / Flowcharts (Astah)** | `BF01` đến `BF06` | Các bước phân nhánh điều kiện: Hàng chờ, Giữ ghế, Thanh toán, Hủy/hoàn tiền, Duyệt sự kiện, Quét QR. |
-| **Entity Relationship Diagram (Astah)** | `03_ERD_And_Database_Schema_Design.md` | 19 thực thể chuẩn MySQL 8.0, kiểu dữ liệu, khóa PK/FK, chỉ mục B-tree và ràng buộc toàn vẹn. |
-| **High-Level System Architecture (Astah)**| `01_High_Level_Architecture...` | 7 tầng kiến trúc: Client $\rightarrow$ CDN/WAF $\rightarrow$ Gateway $\rightarrow$ Modular Monolith $\rightarrow$ Cache $\rightarrow$ Kafka $\rightarrow$ MySQL. |
+| **Entity Relationship Diagram (Astah)** | 03_ERD_And_Database_Schema_Design.md | 20 bảng nghiệp vụ + transactional outbox (21 bảng); mô hình logic Microsoft SQL Server, PK/FK và ràng buộc. |
+| **High-Level System Architecture (Astah)**| `01_High_Level_Architecture...` | Client → CDN/WAF → Gateway → Modular Monolith + Worker; Redis, RabbitMQ, SQL Server Primary/readable secondary + async DR replica; không có NoSQL. |
 | **UI/UX Wireframes & Prototypes (Figma)** | `UC04`, `UC05`, `UC06`, `UC07`, `UC14` | Giao diện phòng chờ ảo, sơ đồ ghế khán đài SVG trực quan, màn hình thanh toán, mã Dynamic QR. |
 
 ---
@@ -134,9 +134,14 @@ Dành cho các thành viên đội ngũ thiết kế, đồ họa kỹ thuật v
 
 - **Quy mô người dùng đồng thời đỉnh (Flash-Sale):** $100.000\text{ CCU}$
 - **Thông lượng tiếp nhận API Gateway:** $\ge 35.000\text{ QPS}$
-- **Độ sẵn sàng hệ thống (Uptime SLA):** $99.99\%$ (Tương đương Downtime $< 4.38\text{ phút/tháng}$)
+- **SLO khả dụng:** 99.95% mỗi tháng cho critical first-party purchase APIs theo D-027; payment provider được đo riêng; không tuyên bố SLA hợp đồng.
 - **Thời gian giữ ghế tạm thời:** Đúng $600\text{ giây}$ ($10\text{ phút}$)
 - **Tốc độ phản hồi quét vé tại cổng:** $\le 500\text{ ms}$
 - **Nguyên tắc cốt lõi:** **Tuyệt đối không bán trùng ghế (Zero Double-Booking)** & **Chống thanh toán trùng lặp (Idempotent Payment)**.
 
 
+
+
+## Cách đọc và xử lý điểm chưa thống nhất
+
+Đọc [Chuẩn biên tập và cách đọc bộ tài liệu BA](./00_Project_Governance/04_BA_Editorial_And_Consistency_Standards.md) trước khi dùng các tài liệu chi tiết. Câu hỏi chưa được xác nhận được theo dõi trong [Decision Log](./00_Project_Governance/03_Risks_Open_Questions_And_Decision_Log.md); không xem đề xuất kỹ thuật là quyết định nghiệp vụ.

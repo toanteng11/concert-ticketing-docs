@@ -1,4 +1,6 @@
-﻿# UC13 — Báo Cáo Doanh Thu & Vé Bán (Revenue & Ticket Sales Reports)
+# UC13 — Báo Cáo Doanh Thu & Vé Bán (Revenue & Ticket Sales Reports)
+
+> **Phạm vi:** báo cáo doanh thu và vé bán thuộc baseline. Voucher/campaign metrics ngoài baseline theo D-031.
 
 ## 1. Thông Tin Chung
 
@@ -12,7 +14,7 @@
 | **Mức độ ưu tiên** | 🔴 High |
 | **Precondition** | Actor đã đăng nhập thành công với quyền tương ứng (`ROLE_ORGANIZER` hoặc `ROLE_ADMIN`); concert đã có phát sinh giao dịch hoặc đang mở bán |
 | **Postcondition** | Báo cáo phân tích được kết xuất hiển thị trực quan hoặc tải xuống tệp tin dữ liệu có bảo mật |
-| **BR liên quan** | BR-PAY-005 (đối soát doanh thu & phí sàn), BR-ORD-003, BR-ORD-004 |
+| **BR liên quan** | BR-PAY-005, BR-RFD-007, BR-CON-005, BR-ORD-003, BR-ORD-004 |
 
 ---
 
@@ -23,6 +25,41 @@ Use case này mô tả nghiệp vụ trích xuất, tổng hợp và phân tích
 - **Admin:** Được xem bức tranh toàn cảnh của hệ thống (Gross Merchandise Value - GMV, tổng doanh thu phí sàn, đối soát liên ngân hàng/ví điện tử, cảnh báo rủi ro thanh toán).
 
 ---
+
+<!-- BEGIN MERMAID USE-CASE UC13 -->
+### Sơ đồ Use Case (Mermaid)
+
+```mermaid
+flowchart LR
+  organizer["👤 Organizer"]
+  admin["👤 Admin"]
+  payment["VNPay / MoMo Gateway"]
+  subgraph SYS["Concert Ticketing System — UC13"]
+    direction TB
+    sales(["Xem báo cáo bán vé và doanh thu"])
+    occupancy(["Phân tích tốc độ bán và tỷ lệ lấp đầy"])
+    refunds(["Xem báo cáo hủy và hoàn tiền"])
+    reconcile(["Đối soát thanh toán và phí sàn"])
+    export(["Xuất báo cáo dữ liệu"])
+  end
+  organizer --- sales
+  organizer --- occupancy
+  organizer --- refunds
+  organizer --- export
+  admin --- sales
+  admin --- occupancy
+  admin --- refunds
+  admin --- reconcile
+  admin --- export
+  payment --- reconcile
+  note["Organizer chỉ xem concert thuộc quyền quản lý; Admin xem phạm vi toàn hệ thống. Voucher/campaign metrics ngoài baseline theo D-031."]
+  sales -.-> note
+  classDef actor fill:#fff,stroke:#334155,stroke-width:1px
+  classDef provider fill:#f1f5f9,stroke:#64748b,stroke-width:1px
+  class organizer,admin actor
+  class payment provider
+```
+<!-- END MERMAID USE-CASE UC13 -->
 
 ## 3. Luồng Chính A — Organizer Xem Báo Cáo Doanh Thu Real-Time
 
@@ -40,7 +77,7 @@ Use case này mô tả nghiệp vụ trích xuất, tổng hợp và phân tích
 | Bước | Actor | Hành động | Phản hồi hệ thống |
 |---|---|---|---|
 | 1 | Admin | Đăng nhập Admin Portal → Chọn "Báo cáo tài chính toàn hệ thống" | Hiển thị tổng quan tài chính toàn sàn theo chu kỳ (Ngày/Tuần/Tháng/Năm) |
-| 2 | Admin | Xem các chỉ số vĩ mô | Hiển thị:<br>- **Tổng giá trị giao dịch (GMV):** Tổng tiền khách hàng đã thanh toán thành công<br>- **Doanh thu phí nền tảng (Platform Commission):** Ví dụ 3% – 5% trên mỗi vé bán<br>- **Tổng tiền hoàn trả (Total Refunded):** Số tiền đã hoàn do hủy vé hoặc hủy concert<br>- **Số dư tài khoản Escrow:** Tiền tạm giữ đang chờ quyết toán cho Organizer |
+| 2 | Admin | Xem các chỉ số vĩ mô | Hiển thị GMV vé, tổng tiền thanh toán đã capture, refund đã xác nhận, phí nền tảng theo snapshot hợp đồng và số dư chờ quyết toán theo sổ nội bộ; không xác nhận custody/escrow hoặc số dư ngân hàng |
 | 3 | Admin | Chọn tab "Đối soát cổng thanh toán" (Reconciliation) | Hệ thống so khớp dữ liệu nội bộ đơn hàng `PAID` với file đối soát đối tác (VNPay/MoMo Settlement Data) |
 | 4 | Admin | Xem bảng đối soát tự động | Phân loại các giao dịch: Khớp 100%, Sai lệch số tiền, Giao dịch thừa/thiếu (Discrepancy) |
 
@@ -56,15 +93,6 @@ Use case này mô tả nghiệp vụ trích xuất, tổng hợp và phân tích
 | 3 | Actor chọn cấu hình xuất và nhấn "Tải xuống". |
 | 4 | **Trường hợp tập dữ liệu < 5.000 dòng:** Hệ thống tạo file trực tiếp trên RAM và trả về luồng tải xuống trình duyệt ngay lập tức (< 3 giây). |
 | 5 | **Trường hợp tập dữ liệu ≥ 5.000 dòng:** Hệ thống tạo Job xử lý nền (Async Worker Task), hiển thị thông báo: *"Báo cáo đang được xử lý ngầm, hệ thống sẽ gửi đường dẫn tải về email của bạn khi hoàn tất"*. |
-
-### AF-02: Lọc Báo Cáo Chi Tiết Theo Kênh & Mã Giảm Giá
-| Bước | Mô tả |
-|---|---|
-| 1 | Organizer chọn lọc theo: Kênh thanh toán (VNPay / MoMo) hoặc Mã khuyến mãi (Voucher Campaign). |
-| 2 | Hệ thống tính toán chi tiết: Tổng số lượt dùng voucher, tổng giá trị chiết khấu do Organizer tài trợ vs sàn tài trợ. |
-| 3 | Hiển thị bảng chi tiết ROI của chiến dịch khuyến mãi. |
-
----
 
 ## 6. Luồng Ngoại Lệ (Exception Flows)
 
@@ -91,19 +119,22 @@ Use case này mô tả nghiệp vụ trích xuất, tổng hợp và phân tích
 | `available_count` | Integer | Số ghế còn trống có thể bán (`AVAILABLE`) |
 | `occupancy_rate` | Percentage (%) | Tỷ lệ lấp đầy: `(sold_count / total_capacity) * 100%` |
 | `gross_revenue` | Currency (VND) | Tổng doanh thu gộp: `sold_count * ticket_price` |
-| `discount_amount` | Currency (VND) | Tổng giá trị giảm giá/khuyến mãi áp dụng trên Zone |
+| discount_amount | Currency (VND) | Bằng 0 trong baseline theo D-031 |
 | `net_revenue` | Currency (VND) | Doanh thu thực tế sau chiết khấu |
 
 ### Bảng 2: Báo Cáo Quyết Toán Tài Chính (Settlement Summary)
 
 | Chỉ số tài chính | Công thức tính | Ý nghĩa nghiệp vụ |
 |---|---|---|
-| **Tổng GMV (Gross)** | $\sum (\text{Giá vé} \times \text{Số vé PAID})$ | Tổng dòng tiền khách hàng đã thanh toán |
-| **Tổng tiền hoàn lại (Refunded)** | $\sum (\text{Số tiền hoàn trả các đơn CANCELLED/REFUNDED})$ | Dòng tiền đã rút khỏi hệ thống do hủy vé/hủy show |
-| **Doanh thu thuần (Net Sales)** | $\text{Gross GMV} - \text{Refunded}$ | Doanh thu thực tế phát sinh còn hiệu lực |
-| **Phí dịch vụ sàn (Platform Fee)** | $\text{Net Sales} \times \text{Tỷ lệ phí thỏa thuận (\%)} + \text{Phí cố định}$ | Khoản doanh thu nền tảng Ticketing giữ lại |
-| **Số tiền chi trả Organizer** | $\text{Net Sales} - \text{Phí dịch vụ sàn}$ | Khoản tiền chuyển khoản vào tài khoản ngân hàng của BTC |
+| **GMV vé (Ticket GMV)** | Tổng giá niêm yết của order_items thuộc order PAID; discount_amount bằng 0 theo D-031 | Giá trị vé bán; không đồng nhất với tổng tiền đã capture gồm phí/thuế |
+| **Tổng tiền đã capture** | Tổng amount của payment_transactions có status SUCCESS đã xác nhận | Tổng tiền thu từ khách theo dữ liệu provider; đối chiếu riêng với GMV vé |
+| **Tổng refund đã xác nhận** | Tổng refunds có status COMPLETED; UNKNOWN/discrepancy hiển thị riêng | Tiền provider xác nhận đã trả lại khách |
+| **Tiền đã thu ròng (Net Captured)** | Tổng payment capture đã xác nhận - tổng refund COMPLETED | Tiền thu thực tế còn lại; chưa phải payable Organizer |
+| **Phí dịch vụ sàn (Platform Fee)** | Tính theo tỷ lệ/công thức/phí cố định trong snapshot điều khoản hợp đồng gắn với kỳ quyết toán | Chỉ áp dụng điều khoản có hiệu lực; không dùng tỷ lệ mẫu hoặc mặc định |
+| **Payable Organizer** | Tổng settlement entries theo snapshot hợp đồng và adjustment đã duyệt | Không suy ra chỉ từ GMV; cách phân bổ phí/thuế/refund phụ thuộc hợp đồng |
 
+
+GMV vé tính theo giá niêm yết của order_items; tiền đã capture lấy từ payment provider; Net Captured = capture đã xác nhận − refund COMPLETED. Payable Organizer được tính từ eligible_sales_amount, refund allocation, phí và adjustment theo snapshot hợp đồng, nên không thể suy trực tiếp từ GMV.
 ---
 
 ## 8. User Stories & Acceptance Criteria
@@ -133,6 +164,9 @@ Use case này mô tả nghiệp vụ trích xuất, tổng hợp và phân tích
 | AC-13-02-02 | Tự động so khớp theo `transaction_id`, `order_id`, số tiền và trạng thái giao dịch | Functional |
 | AC-13-02-03 | Bất kỳ trường hợp lệch trạng thái (VD: Cổng báo thành công nhưng sàn chưa ghi nhận `PAID`) phải được gắn cờ `DISCREPANCY` và xuất danh sách riêng | Functional |
 | AC-13-02-04 | Lưu vết lịch sử đối soát và người thực hiện phê duyệt quyết toán vào Audit Log | Security |
+| AC-13-02-05 | Phí nền tảng và payable khớp snapshot điều khoản hợp đồng gắn với settlement; không dùng mức phí mặc định | Financial / Functional |
+| AC-13-02-06 | Chặn READY_FOR_APPROVAL/APPROVED/PAID nếu concert chưa COMPLETED, reconciliation chưa MATCHED, còn payment/refund UNKNOWN hoặc discrepancy chưa xử lý | Control |
+| AC-13-02-07 | Admin/Finance phê duyệt có audit log, người duyệt và thời điểm; chỉ ghi PAID khi có payout reference và bằng chứng chuyển tiền | Security / Audit |
 
 ---
 
@@ -158,5 +192,30 @@ Use case này mô tả nghiệp vụ trích xuất, tổng hợp và phân tích
 | **UC13.3** | Xem Báo Cáo Lịch Sử Hoàn Tiền & Hủy Vé | Organizer, Admin | Refund Service | Quản trị rủi ro & tỷ lệ hoàn vé |
 | **UC13.4** | Báo Cáo Đối Soát Cổng Thanh Toán (Reconciliation) | Admin | VNPay, MoMo API | Kiểm tra chênh lệch số dư ngân hàng |
 | **UC13.5** | Xuất Báo Cáo Ra Excel/CSV (Sync & Async Export) | Organizer, Admin | Message Queue, S3 Storage | Tải dữ liệu ngoại tuyến kế toán |
-| **UC13.6** | Cấu Hình Lịch Gửi Báo Cáo Định Kỳ Qua Email | Organizer, Admin | Notification Worker | Nhận báo cáo tự động mỗi 08:00 sáng |
+| **UC13.6 (ngoài baseline)** | Lịch gửi báo cáo định kỳ qua email (đề xuất tương lai) | Organizer, Admin | Notification Worker | Không có schedule persistence hoặc UAT trong release hiện tại |
+
+
+
+
+## 10. Vòng đời settlement
+
+```mermaid
+stateDiagram-v2
+  [*] --> DRAFT
+  DRAFT --> PENDING_RECONCILIATION : hồ sơ yêu cầu và snapshot hợp đồng hợp lệ
+  PENDING_RECONCILIATION --> READY_FOR_APPROVAL : concert COMPLETED, reconciliation MATCHED, không UNKNOWN/discrepancy
+  PENDING_RECONCILIATION --> ON_HOLD : có UNKNOWN, discrepancy, dispute hoặc thiếu điều khoản/bằng chứng
+  READY_FOR_APPROVAL --> APPROVED : Finance/Admin duyệt và ghi audit
+  READY_FOR_APPROVAL --> ON_HOLD : phát sinh vấn đề trước payout
+  APPROVED --> PAID : transfer reference và bằng chứng xác nhận được ghi
+  ON_HOLD --> PENDING_RECONCILIATION : xử lý xong và đối soát lại
+  READY_FOR_APPROVAL --> REJECTED : Admin/Finance từ chối có lý do
+```
+
+### Điều kiện lập và ghi nhận quyết toán
+
+1. Concert phải ở trạng thái COMPLETED; mọi payment/refund liên quan phải được đối soát, không còn UNKNOWN hoặc discrepancy chưa xử lý.
+2. Tỷ lệ phí, căn cứ tính, thời gian chờ, chi phí refund và điều kiện payout lấy từ snapshot hợp đồng có hiệu lực; không dùng tỷ lệ hoặc số ngày minh họa.
+3. Organizer gửi yêu cầu; Finance/Admin kiểm tra, phê duyệt và ghi audit. Baseline chỉ lưu hồ sơ quyết toán, phê duyệt và bằng chứng/tham chiếu payout; không giả định tích hợp chuyển khoản tự động hay giữ tiền trong escrow (D-034).
+4. Nếu có bất đồng, chargeback, refund UNKNOWN hoặc thiếu bằng chứng thì settlement chuyển ON_HOLD; không ghi PAID trước khi có xác nhận chuyển tiền.
 

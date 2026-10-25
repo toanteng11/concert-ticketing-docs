@@ -20,6 +20,36 @@ Use case này cho phép bất kỳ người dùng (đã đăng nhập hoặc ch�
 
 ---
 
+<!-- BEGIN MERMAID USE-CASE UC04 -->
+### Sơ đồ Use Case (Mermaid)
+
+```mermaid
+flowchart LR
+  guest["👤 Khách vãng lai"]
+  customer["👤 Khách hàng"]
+  subgraph SYS["Concert Ticketing System — UC04"]
+    direction TB
+    browse(["Duyệt danh sách concert công khai"])
+    search(["Tìm concert theo từ khóa"])
+    filter(["Lọc concert theo tiêu chí"])
+    sort(["Sắp xếp kết quả"])
+    detail(["Xem chi tiết concert"])
+  end
+  guest --- browse
+  customer --- browse
+  guest --- search
+  customer --- search
+  guest --- filter
+  customer --- filter
+  guest --- sort
+  customer --- sort
+  guest --- detail
+  customer --- detail
+  classDef actor fill:#fff,stroke:#334155,stroke-width:1px
+  class guest,customer actor
+```
+<!-- END MERMAID USE-CASE UC04 -->
+
 ## 3. Điều Kiện Tiên Quyết (Preconditions)
 
 - Không yêu cầu đăng nhập.

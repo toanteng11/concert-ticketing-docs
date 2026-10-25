@@ -1,4 +1,4 @@
-﻿# UC11 — Tạo & Quản Lý Concert (Organizer)
+# UC11 — Tạo & Quản Lý Concert (Organizer)
 
 ## 1. Thông Tin Chung
 
@@ -19,6 +19,40 @@
 Use case này mô tả toàn bộ quy trình Organizer tạo một concert mới: từ nhập thông tin sự kiện, thiết kế sơ đồ ghế, định giá vé, đến gửi hồ sơ cho Admin phê duyệt. Sau khi concert được phê duyệt, Organizer có thể theo dõi tiến độ bán vé và quản lý vận hành.
 
 ---
+
+<!-- BEGIN MERMAID USE-CASE UC11 -->
+### Sơ đồ Use Case (Mermaid)
+
+```mermaid
+flowchart LR
+  organizer["👤 Organizer đã xác minh KYC"]
+  subgraph SYS["Concert Ticketing System — UC11"]
+    direction TB
+    create(["Tạo và cập nhật concert"])
+    venue(["Khai báo địa điểm, thời gian và nội dung"])
+    seating(["Thiết kế sơ đồ ghế và khu vực"])
+    pricing(["Thiết lập giá vé và ghế kỹ thuật"])
+    submit(["Lưu nháp hoặc gửi hồ sơ vào hàng chờ duyệt"])
+    operate(["Theo dõi và quản lý concert đã duyệt"])
+    staff(["Quản lý nhân viên vận hành"])
+    cancel(["Gửi yêu cầu hủy concert"])
+    settlement(["Yêu cầu quyết toán theo quy trình"])
+  end
+  organizer --- create
+  create -.->|«bao gồm»| venue
+  create -.->|«bao gồm»| seating
+  create -.->|«bao gồm»| pricing
+  organizer --- submit
+  organizer --- operate
+  organizer --- staff
+  organizer --- cancel
+  organizer --- settlement
+  note["Concert phải qua UC12 để được phê duyệt trước khi công khai/mở bán. Organizer mới chưa xác minh đầy đủ bị giới hạn tối đa 2 concert hoạt động theo BR-CON-007."]
+  submit -.-> note
+  classDef actor fill:#fff,stroke:#334155,stroke-width:1px
+  class organizer actor
+```
+<!-- END MERMAID USE-CASE UC11 -->
 
 ## 3. Giai Đoạn 1: Tạo Thông Tin Concert
 
@@ -81,9 +115,9 @@ Use case này mô tả toàn bộ quy trình Organizer tạo một concert mới
 | **Xem Dashboard bán vé** | Tỷ lệ lấp đầy, doanh thu tạm tính, số vé bán theo Zone | Concert đang ON_SALE |
 | **Quản lý nhân viên soát vé** | Thêm/sửa/xóa tài khoản Staff; phân công cổng check-in | Sau khi PUBLISHED |
 | **Đóng bán sớm** | Chuyển concert từ ON_SALE sang CLOSED | Khi concert ON_SALE |
-| **Yêu cầu hủy concert** | Gửi yêu cầu hủy cần Admin xác nhận | Trước giờ diễn ≥ 72h |
+| **Yêu cầu hủy concert** | Gửi yêu cầu để Admin xem xét theo hợp đồng/chính sách đã phê duyệt; không áp ngưỡng 72 giờ mặc định | Chờ Admin quyết định; xử lý order PAID theo BR-RFD-004 nếu được duyệt |
 | **Xem báo cáo check-in** | Số vé đã quét, tiến độ theo cổng và thời gian | Trong ngày diễn |
-| **Yêu cầu quyết toán** | Gửi yêu cầu rút doanh thu sau khi concert COMPLETED | Sau khi COMPLETED |
+| **Yêu cầu quyết toán** | Gửi yêu cầu lập quyết toán sau khi concert COMPLETED, giao dịch được đối soát và đủ điều kiện theo hợp đồng | Chờ Admin/Finance kiểm tra, phê duyệt và ghi nhận payout theo D-034 |
 
 ---
 
@@ -142,5 +176,5 @@ Use case này mô tả toàn bộ quy trình Organizer tạo một concert mới
 | UC11.5 — Quản lý tài khoản Staff | Organizer | — | Tạo/phân công Gate Staff |
 | UC11.6 — Xem Dashboard bán vé | Organizer | — | Real-time; Organizer-scoped |
 | UC11.7 — Xem báo cáo check-in hiện trường | Organizer | — | Ngày diễn ra sự kiện |
-| UC11.8 — Yêu cầu quyết toán doanh thu | Organizer | Finance Service | Sau khi COMPLETED |
+| UC11.8 — Yêu cầu lập quyết toán sau concert COMPLETED và đối soát | Organizer | Finance/Admin | Theo điều khoản hợp đồng; chưa giả định chuyển khoản tự động |
 

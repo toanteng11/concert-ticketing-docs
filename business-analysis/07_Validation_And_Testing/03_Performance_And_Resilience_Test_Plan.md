@@ -1,18 +1,22 @@
-﻿# 03 — Kế Hoạch Kiểm Thử Tải & Khả Năng Phục Hồi (Performance & Resilience Test Plan)
+# 03 — Kế Hoạch Kiểm Thử Tải & Khả Năng Phục Hồi (Performance & Resilience Test Plan)
+
+> **Phạm vi kiểm thử:** check-in online thuộc baseline; mất mạng phải fail-closed theo D-023. Test 100.000 CCU, HA/DR, licensing và sizing là release gates; kế hoạch này không khẳng định các bài test đã chạy.
+
+> **Hạ tầng baseline:** RabbitMQ và SQL Server 2025 Enterprise Always On AG theo D-025/D-026. Sizing/license và số liệu hiệu năng cần được đo, DBA/Finance ký trước go-live theo D-030.
 
 ## 1. Giới Thiệu & Mục Tiêu Thử Nghiệm
 
 Mục tiêu của kế hoạch kiểm thử hiệu năng và khả năng phục hồi (**Performance & Resilience Testing Plan**):
-1. **Kiểm chứng khả năng chịu tải $100.000\text{ CCU}$:** Đảm bảo hệ sinh thái hạ tầng đám mây (Kubernetes, Redis Cluster, Kafka, MySQL 8.0, Kong Gateway) vận hành mượt mà, không sập nguồn khi bước vào giờ mở bán vé sự kiện quy mô lớn.
+1. **Kiểm chứng khả năng chịu tải $100.000\text{ CCU}$:** Đảm bảo hệ sinh thái hạ tầng đám mây (Kubernetes, Redis Cluster, RabbitMQ (D-025), SQL Server, Kong Gateway) vận hành mượt mà, không sập nguồn khi bước vào giờ mở bán vé sự kiện quy mô lớn.
 2. **Đo lường độ trễ chuẩn hóa (Latency Benchmarking):** Xác minh các chỉ số độ trễ P50, P95, P99 đạt đúng cam kết mục tiêu trong tài liệu SLO/SLA (P99 $< 150\text{ ms}$ cho hàng chờ, $< 350\text{ ms}$ cho giữ ghế).
-3. **Thực nghiệm kỹ thuật hỗn loạn (Chaos Engineering):** Chủ động đánh sập các thành phần phần cứng/dịch vụ quan trọng (Redis Master, MySQL 8.0 Primary, Cổng thanh toán) để kiểm chứng khả năng tự phục hồi (Self-Healing) và đảm bảo **Tuyệt đối không bán trùng ghế trong mọi tình huống sự cố**.
+3. **Thực nghiệm kỹ thuật hỗn loạn (Chaos Engineering):** Chủ động đánh sập các thành phần phần cứng/dịch vụ quan trọng (Redis Master, SQL Server Primary, Cổng thanh toán) để kiểm chứng khả năng tự phục hồi (Self-Healing) và đảm bảo **Tuyệt đối không bán trùng ghế trong mọi tình huống sự cố**.
 
 ---
 
 ## 2. Quy Chuẩn Môi Trường Kiểm Thử (Test Environment Setup)
 
 - **Môi trường:** Staging Dedicated Performance Cluster (Cách ly hoàn toàn với môi trường Development).
-- **Hạ tầng cụm máy chủ:** Cấu hình phần cứng tương đương **$100\%$ quy mô Production** (12 Worker Nodes `c6g.2xlarge`, Redis Cluster 6 nodes, MySQL 8.0 Primary 16 vCPU / 64 GB RAM + 2 Read Replicas).
+- **Hạ tầng cụm máy chủ:** Cấu hình SQL Server và broker theo topology đã chốt; Topology baseline được ghi tại D-025/D-026; sizing và licensing vẫn là cổng DBA/Finance D-030, chưa được xem là đã nghiệm thu.
 - **Công cụ phát tải phân tán (Distributed Load Generators):**
   - Cụm máy chủ tạo tải gồm 10 máy ảo độc lập chạy công cụ **k6 (Grafana)** và **Locust**.
   - Băng thông mạng máy phát tải: Đạt tối thiểu $10\text{ Gbps}$ ra vào Internet để không bị nghẽn cổ chai tại máy test.
@@ -29,7 +33,7 @@ Hệ thống được kiểm thử qua 4 bài kiểm tra tải tiêu chuẩn:
 | **1. Baseline Load Test (Tải cơ sở)** | Đo đạc hiệu năng ngày thường | Duy trì ổn định $5.000\text{ CCU}$ trong 2 giờ liên tục | P99 Latency $< 100\text{ ms}$; CPU máy chủ $< 30\%$; Tỷ lệ lỗi $= 0\%$ |
 | **2. Stress Test (Thử thách cực hạn)** | Tìm điểm gãy (Breaking Point) của hệ thống | Tăng dần tải từ $10.000\text{ CCU} \rightarrow 150.000\text{ CCU}$ trong 30 phút | Hệ thống không sập toàn bộ; Cơ chế Load Shedding kích hoạt chính xác tại ngưỡng $120.000\text{ CCU}$ |
 | **3. Spike / Flash-Sale Test (Sốc tải giờ G)** | Mô phỏng giờ mở bán Mega Concert | Đột biến từ $0 \rightarrow 100.000\text{ CCU}$ chỉ trong vòng **$60\text{ giây}$** đúng thời khắc mở bán | Phòng chờ ảo hấp thụ $100\%$ tải; Không rớt kết nối TCP; Không bán trùng ghế |
-| **4. Soak / Endurance Test (Tải ngâm dài hạn)**| Phát hiện rò rỉ bộ nhớ (Memory Leak) | Duy trì $20.000\text{ CCU}$ liên tục trong suốt **$24\text{ giờ}$** | RAM của các Pod không tăng tuyến tính; Không cạn kiệt Connection Pool HikariCP / ProxySQL |
+| **4. Soak / Endurance Test (Tải ngâm dài hạn)**| Phát hiện rò rỉ bộ nhớ (Memory Leak) | Duy trì $20.000\text{ CCU}$ liên tục trong suốt **$24\text{ giờ}$** | RAM của các Pod không tăng tuyến tính; Không cạn kiệt Connection Pool HikariCP |
 
 ---
 
@@ -50,12 +54,32 @@ Hệ thống được kiểm thử qua 4 bài kiểm tra tải tiêu chuẩn:
 
 | Mã | Thành phần bị tấn công | Kịch bản tiêm lỗi hỗn loạn (Fault Injection) | Hành vi dự kiến của hệ thống | Tiêu chuẩn nghiệm thu phục hồi |
 |---|---|---|---|---|
-| **RT-001** | **Sập Node Redis Master** | Dùng Chaos Mesh tiêu diệt (Kill Pod) đột ngột node Redis Master đang giữ khóa ghế của Zone Hot nhất | Cụm Redis tự động bầu cử Replica lên làm Master trong vòng 3 giây; MySQL 8.0 bảo vệ chốt chặn cuối | **Không bán trùng ghế nào**; Hệ thống trở lại bình thường trong $< 5\text{ giây}$ |
-| **RT-002** | **Sập MySQL 8.0 Primary** | Ép tắt nguồn (Hard Reboot) máy chủ Database Master trong lúc đang có $50$ transaction thanh toán dở dang | Patroni tự động phong cấp Read Replica lên làm Master; HikariCP / ProxySQL chuyển hướng kết nối | RPO $\le 5$ giây; RTO $\le 20$ giây; Dữ liệu các đơn hàng đã `COMMIT` được bảo toàn nguyên vẹn $100\%$ |
+| **RT-001** | **Sập Node Redis Master** | Dùng Chaos Mesh tiêu diệt (Kill Pod) đột ngột node Redis Master đang giữ khóa ghế của Zone Hot nhất | Cụm Redis tự động bầu cử Replica lên làm Master trong vòng 3 giây; SQL Server bảo vệ chốt chặn cuối | **Không bán trùng ghế nào**; Hệ thống trở lại bình thường trong $< 5\text{ giây}$ |
+| **RT-002** | **Sập SQL Server Primary** | Ép tắt SQL Server Primary trong lúc có 50 transaction thanh toán | Quan sát failover/reconnect theo SQL Server Always On AG D-026; xác nhận endpoint và connection pool | Đo local RPO/RTO (mục tiêu 0/≤5 phút) và DR RPO/RTO (≤5/≤60 phút); kiểm tra dữ liệu COMMIT; lưu số đo và runbook evidence; chưa coi mục tiêu là đã nghiệm thu trước khi diễn tập |
 | **RT-003** | **Chậm mạng Cổng Thanh Toán** | Tiêm độ trễ mạng thêm $3.000\text{ ms}$ vào mọi kết nối gọi ra ngoài VNPay | Circuit Breaker chuyển sang trạng thái `OPEN` sau 20 request bị chậm; Tự động kích hoạt Fallback | Thread pool không bị cạn kiệt; Khách hàng được chuyển hướng sang cổng MoMo mượt mà |
-| **RT-004** | **Sập Message Broker Kafka** | Đánh sập ngẫu nhiên 1 trong 3 Broker Kafka trong giờ mở bán vé | 2 Broker còn lại tiếp tục nhận sự kiện bình thường (nhờ Replication Factor = 3, Min In-Sync Replicas = 2) | Không mất mát bất kỳ tin nhắn sự kiện nào (Zero Message Loss) |
-| **RT-005** | **Mất mạng cổng soát vé** | Cắt đường truyền Internet của thiết bị máy quét cầm tay tại Cổng A | Ứng dụng Staff chuyển sang chế độ Offline Mode trong $< 2\text{ giây}$; Tiếp tục quét vé hợp lệ bằng SQLite | Đồng bộ dữ liệu ngược lên server ngay khi kết nối lại mà không phát sinh xung đột |
+| **RT-004** | **Sập broker đã chọn** | Tiêm lỗi RabbitMQ theo topology triển khai | Xác nhận durable message được phục hồi/re-delivered; consumer idempotent không tạo tác động trùng | Không mất mát bất kỳ tin nhắn sự kiện nào (Zero Message Loss) |
+| **RT-005** | **Mất mạng cổng soát vé** | Cắt toàn bộ mạng tới scanner tại Cổng A | Scanner báo lỗi kết nối; không xác nhận vé, không chuyển ticket sang CHECKED, không chấp nhận cache/JWT đơn lẻ | Khi mạng phục hồi, scan lại idempotent; log sự cố được giữ và không có check-in offline theo D-023 |
 | **RT-006** | **Chết Pod Backend giữa chừng** | Kill Pod của `Order Service` đúng lúc đang xử lý lưu đơn hàng | Kubernetes tự động khởi động Pod mới (Self-healing); Client gửi lại request với cùng `Idempotency-Key` | Không phát sinh đơn hàng trùng lặp; Giao dịch hoàn tất thành công sau khi retry |
+
+<!-- BEGIN MERMAID DIAGRAM TEST-PERF-RESILIENCE -->
+### Vòng kiểm thử tải và phục hồi
+
+```mermaid
+flowchart LR
+  env["Dedicated Staging performance cluster<br/>load generators + monitoring"]
+  profiles["Run defined profiles<br/>baseline, stress, spike, soak"]
+  scenarios["Run critical performance cases<br/>queue, seat hold, payment, QR, expiry"]
+  chaos["Inject failure scenarios<br/>Redis, SQL, gateway, broker, backend pod"]
+  measure["Collect latency, throughput, error rate,<br/>double-booking and recovery evidence"]
+  gate{"All Go-Live exit criteria met?"}
+  ready["Submit evidence for technical sign-off"]
+  remediate["Tune / fix; repeat affected profile and regression"]
+  env --> profiles --> scenarios --> chaos --> measure --> gate
+  gate -->|yes| ready
+  gate -->|no| remediate --> profiles
+```
+<!-- END MERMAID DIAGRAM TEST-PERF-RESILIENCE -->
+
 
 ---
 
@@ -68,6 +92,6 @@ Hệ thống chỉ được phép chuyển từ môi trường Staging sang Prod
    - Hàng chờ ảo: P99 Latency $< 150\text{ ms}$.
    - Khóa giữ ghế: P99 Latency $< 350\text{ ms}$.
    - Soát vé tại cổng: Phản hồi máy quét $\le 500\text{ ms}$.
-4. **Độ ổn định khi phục hồi:** Các bài kiểm tra Chaos Engineering (RT-001 đến RT-006) đều tự phục hồi thành công trong khung thời gian quy định (RTO $< 30$ phút, RPO $< 5$ phút).
+4. **Độ ổn định khi phục hồi:** Chạy RT-001 đến RT-006 trên topology production-like; lưu số đo, dữ liệu commit và runbook evidence. So sánh kết quả với mục tiêu D-026 (local RPO 0/RTO ≤5 phút; DR RPO ≤5 phút/RTO ≤60 phút). Đây là release gate, chưa được xem là đạt trước khi có diễn tập.
 5. **Ký duyệt biên bản:** Báo cáo kiểm thử tải được Trưởng nhóm Kiến trúc Hệ thống (Lead Architect), Trưởng nhóm SRE và Quản lý Dự án (Project Manager) cùng ký xác nhận nghiệm thu.
 

@@ -17,7 +17,7 @@ Hệ thống tuân thủ nghiêm ngặt các nguyên tắc thiết kế **RESTfu
   "success": true,
   "code": 200,
   "message": "Thao tác thành công",
-  "data": { ... },
+  "data": {},
   "meta": {
     "server_time": 1729774800,
     "request_id": "req_8f9b2c-4e1a-4d3b"
@@ -123,15 +123,15 @@ Hệ thống tuân thủ nghiêm ngặt các nguyên tắc thiết kế **RESTfu
 ### Nhóm 5: Đặt Hàng & Thanh Toán (Order Checkout & Payment)
 
 #### `POST /orders/checkout` (Tạo Đơn Hàng & Lấy Link Thanh Toán)
+
+> Checkout baseline theo D-031 không nhận voucher_code; discount_amount trong response luôn bằng 0. Tất cả amount là số nguyên VND.
 - **Tiêu đề:** `Authorization: Bearer <token>`, `Idempotency-Key: <uuid>`
 - **Request Payload:**
   ```json
   {
     "concert_id": "550e8400-e29b-41d4-a716-446655440000",
     "hold_token": "hld_9a8b7c6d5e4f3a2b1c",
-    "voucher_code": "SUMMERVIP10",
-    "payment_gateway": "VNPAY",
-    "customer_notes": "Yêu cầu hóa đơn VAT"
+    "payment_gateway": "VNPAY"
   }
   ```
 - **Phản hồi thành công (`201 Created`):**
@@ -143,9 +143,11 @@ Hệ thống tuân thủ nghiêm ngặt các nguyên tắc thiết kế **RESTfu
     "data": {
       "order_code": "ORD-20261024-8F9B",
       "total_amount": 5000000,
-      "discount_amount": 500000,
-      "final_amount": 4500000,
-      "payment_url": "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?vnp_Amount=450000000&vnp_Command=pay...",
+      "discount_amount": 0,
+      "service_fee_amount": 0,
+      "tax_amount": 0,
+      "final_amount": 5000000,
+      "payment_url": "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?vnp_Amount=500000000&vnp_Command=pay...",
       "qr_payment_code": "00020101021238580010A0000007270128...",
       "expires_at": 1729775400
     }
@@ -156,8 +158,8 @@ Hệ thống tuân thủ nghiêm ngặt các nguyên tắc thiết kế **RESTfu
 
 ### Nhóm 6: Vé Điện Tử & Soát Vé Tại Cổng (Tickets & Gate Check-In)
 
-#### 1. `GET /tickets/{id}/dynamic-qr` (Lấy Mã QR Động Đổi Mỗi 30s)
-- **Phản hồi:** Trả về chuỗi JWT đã ký HMAC mã hóa `ticket_id`, thời điểm `iat`, thời hạn `exp = NOW + 30s` và chuỗi ngẫu nhiên `nonce`.
+#### 1. `GET /tickets/{id}/dynamic-qr` (Làm mới QR mỗi 30 giây; token có hiệu lực tối đa 60 giây)
+- **Phản hồi:** Trả về JWT/JWS ký bằng RS256 theo SM04, chứa `ticket_id`, `concert_id`, `seat_id`, `iat`, `exp = iat + 60s` và `nonce`. Ứng dụng làm mới token mỗi 30 giây; token hiện tại chỉ hết hiệu lực tại `exp` (hoặc khi vé không còn hợp lệ), không bị từ chối chỉ vì đã phát hành token mới.
 
 #### 2. `POST /check-in/scan` (Nhân Viên Quét Vé Tại Cổng)
 - **Tiêu đề:** `Authorization: Bearer <Staff_Token>`, `X-Device-ID: scanner-001`
@@ -218,3 +220,35 @@ VNPay gửi kết quả thanh toán ngầm qua phương thức HTTP GET/POST kè
   ```
 - **Kiểm tra chữ ký số MoMo:** Tạo chuỗi Raw Signature: `accessKey=$accessKey&amount=$amount&message=$message&orderId=$orderId...` rồi băm HMAC-SHA256 với Secret Key của đối tác.
 - **Tính bất biến (Idempotent Callback Handling):** Nếu đơn hàng đã ở trạng thái `PAID`, hệ thống không lặp lại luồng cộng điểm hay gửi vé mà chỉ trả về HTTP 200 tức thì để MoMo dừng gửi lại.
+
+<!-- BEGIN MERMAID DIAGRAM DESIGN-WEBHOOK-SEQUENCE -->
+### Trình tự IPN thanh toán an toàn và idempotent
+
+```mermaid
+sequenceDiagram
+  actor C as Customer
+  participant API as Order / Payment API
+  participant DB as SQL Server Primary
+  participant PG as VNPay or MoMo
+  participant T as Ticket Module
+  participant MQ as Message Broker
+  C->>API: POST /orders with Idempotency-Key
+  API->>DB: Insert PENDING order and payment attempt
+  API->>PG: Create payment request
+  PG-->>C: Redirect to payment page
+  PG->>API: POST payment IPN / webhook
+  API->>API: Validate source, signature, amount, reference
+  alt invalid signature or amount
+    API-->>PG: Reject / provider-defined error response
+  else duplicate callback already applied
+    API->>DB: Read idempotent transaction result
+    API-->>PG: Acknowledge without duplicate fulfillment
+  else verified payment success
+    API->>DB: Transactionally mark payment and order PAID
+    API->>T: Issue ticket for each order item
+    API->>DB: Commit ticket state
+    API->>MQ: Publish notification event after successful commit
+    API-->>PG: Acknowledge success
+  end
+```
+<!-- END MERMAID DIAGRAM DESIGN-WEBHOOK-SEQUENCE -->

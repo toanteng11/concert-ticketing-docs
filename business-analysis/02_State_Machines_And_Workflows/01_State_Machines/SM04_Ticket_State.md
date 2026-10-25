@@ -1,4 +1,6 @@
-﻿# SM04 — State Machine: Ticket (Trạng Thái Vé Điện Tử)
+# SM04 — State Machine: Ticket (Trạng Thái Vé Điện Tử)
+
+> **Phạm vi:** check-in online là baseline. Khi không thể xác thực trên server, check-in fail-closed theo D-023; không có luồng OFFLINE_SYNC.
 
 ## 1. Mục Đích
 
@@ -6,7 +8,7 @@ Tài liệu mô tả toàn bộ vòng đời trạng thái của một **Vé Đi
 - Thiết kế cột `status` trong bảng `tickets`.
 - Thiết kế Check-in API và xử lý quét QR tại cổng sự kiện.
 - Định nghĩa cấu trúc Dynamic QR Code (JWT payload, rotation logic).
-- Thiết kế cơ chế Offline Check-in an toàn cho nhân viên soát vé.
+- Từ chối check-in khi mất kết nối; không chấp nhận cache cục bộ làm nguồn xác thực.
 - Viết Test Case kiểm tra phòng chống vé giả / quét trùng.
 
 ---
@@ -46,7 +48,7 @@ stateDiagram-v2
 | # | Trạng thái hiện tại | Event / Trigger | Guard Condition | Trạng thái kế tiếp | Actor | BR liên quan |
 |---|---|---|---|---|---|---|
 | T-01 | _(Không tồn tại)_ | `order.status` chuyển sang `PAID` | IPN Webhook xác thực thành công; Order Service phát `OrderPaidEvent`; Ticket Service lắng nghe | `ORDERED` | System (Auto) | BR-TCK-001 |
-| T-02 | `ORDERED` | Nhân viên quét mã QR qua Staff App | (1) Chữ ký QR hợp lệ (HMAC/JWT verify); (2) `concert.gate_open_time <= now() <= concert.end_time + buffer`; (3) `ticket.status = ORDERED`; (4) Staff token có quyền tại gate được phân công | `CHECKED` | Staff | BR-TCK-003, BR-TCK-004, BR-TCK-007 |
+| T-02 | `ORDERED` | Nhân viên quét mã QR qua Staff App | (1) Chữ ký JWT RS256 hợp lệ, xác minh bằng public key; (2) `concert.gate_open_time <= now() <= concert.end_time + buffer`; (3) `ticket.status = ORDERED`; (4) Staff token có quyền tại gate được phân công | `CHECKED` | Staff | BR-TCK-003, BR-TCK-004, BR-TCK-007 |
 | T-03 | `ORDERED` | `order.status` chuyển sang `REFUNDED` | Refund Service hoàn tất; `OrderRefundedEvent` phát tới Ticket Service | `CANCELLED` | System (Event-driven) | BR-RFD-003 |
 | T-04 | `ORDERED` | `concert.status` chuyển sang `CANCELLED` | `ConcertCancelledEvent`; Ticket Service cập nhật hàng loạt toàn bộ vé của concert | `CANCELLED` | System (Event-driven) | BR-RFD-004 |
 | T-05 | `ORDERED` | `concert.status` chuyển sang `COMPLETED` | `ConcertCompletedEvent`; Ticket Service quét tất cả vé `ORDERED` còn lại của concert | `EXPIRED_UNATTENDED` | System (Batch job) | BR-TCK-008 |
@@ -67,14 +69,14 @@ sequenceDiagram
     TK_API->>TK_API: Kiểm tra ticket.status = ORDERED
     TK_API->>QR_SVC: Sinh JWT payload cho QR Code
 
-    QR_SVC->>QR_SVC: Build JWT Payload:\n{ticket_id, concert_id, seat_id,\nholder_name, iat, exp: now()+60}
+    QR_SVC->>QR_SVC: Build JWT Payload:\n{ticket_id, concert_id, seat_id, iat,\nexp: iat+60, nonce}; không chứa PII
     QR_SVC->>QR_SVC: Ký bằng RS256 Private Key\n(Lưu trữ an toàn, rotate định kỳ)
     QR_SVC-->>TK_API: jwt_token (string)
 
     TK_API-->>APP: {qr_token: "eyJhbGci...", expires_in: 60}
     APP->>APP: Render QR Code từ jwt_token\nHiển thị đồng hồ đếm ngược 60s
 
-    Note over APP: Sau 60 giây
+    Note over APP: Sau 30 giây (token có hiệu lực tối đa 60 giây)
     APP->>TK_API: Tự động gọi lại GET /tickets/{id}/qr-token
     TK_API-->>APP: QR Token mới (rotation)
 ```
@@ -83,15 +85,12 @@ sequenceDiagram
 
 ```json
 {
-  "tid": "tkt_9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
-  "cid": "cnc_mytam_2026_hanoi",
-  "sid": "seat_A_VIP_012",
-  "zone": "VIP_A",
-  "holder": "NGUYEN VAN A",
-  "phone_last4": "7890",
+  "ticket_id": "tkt_9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "concert_id": "cnc_mytam_2026_hanoi",
+  "seat_id": "seat_A_VIP_012",
   "iat": 1774350000,
   "exp": 1774350060,
-  "ver": 3
+  "nonce": "f2a81c09"
 }
 ```
 
@@ -121,42 +120,11 @@ flowchart TD
 
 ---
 
-## 6. Cơ Chế Offline Check-in (Offline Fallback)
+## 6. Mất kết nối và thao tác hỗ trợ
 
-Khi mạng tại cổng sự kiện bị gián đoạn, Staff App tự động chuyển sang chế độ Offline:
+Khi scanner không thể xác thực online, không được chuyển ticket sang CHECKED, không hiển thị thành công và không chấp nhận dữ liệu cache/JWT đơn lẻ. Staff chuyển sự cố cho Gate Supervisor theo quy trình vận hành địa điểm. Nếu phải dùng manual override, thao tác cần xác thực online, quyền phù hợp, lý do bắt buộc và audit log; không được tạo một cơ chế offline sync.
 
-```mermaid
-sequenceDiagram
-    participant SA as Staff App (Offline mode)
-    participant LC as Local Encrypted Cache
-    participant API as Check-in API (Online)
-
-    Note over SA: Mất kết nối internet tại cổng
-    SA->>SA: Phát hiện mất kết nối\n→ Chuyển sang Offline Mode
-    SA->>LC: Nạp danh sách ticket hợp lệ của concert\n(Pre-downloaded trước khi vào ca)
-
-    loop Khách hàng trình vé
-        SA->>SA: Quét QR → Verify JWT bằng Public Key (local)
-        SA->>LC: Kiểm tra ticket_id đã có trong\ndanh sách checked_locally chưa?
-        alt Chưa check-in
-            LC-->>SA: Chưa có → Hợp lệ
-            SA->>LC: Ghi nhận {ticket_id, timestamp, gate_id, staff_id}
-            SA-->>Staff: ✅ HỢP LỆ (Offline mode)
-        else Đã check-in trong cùng ca offline
-            LC-->>SA: Đã check-in lúc {time}
-            SA-->>Staff: ❌ ĐÃ QUÉT TRƯỚC ĐÓ (Offline mode)
-        end
-    end
-
-    Note over SA,API: Khi có lại kết nối
-    SA->>API: POST /checkin/sync\n{offline_checkins: [...]}
-    API->>API: Xử lý hàng loạt\nPhát hiện conflict (cùng ticket quét 2 nơi)
-    API->>API: Nếu conflict → ghi cờ SECURITY_BREACH_DUPLICATE_ENTRY
-    API-->>SA: Kết quả sync + danh sách conflict cần xem lại
-```
-
----
-
+Khi mạng phục hồi, staff thực hiện scan lại. Scan ID/idempotency key bảo đảm retry không tạo check-in thành công trùng. Mọi check-in thành công vẫn phải cập nhật ticket và checkin_logs trong transaction nhất quán.
 ## 7. Quy Tắc Bất Biến (Ticket State Invariants)
 
 | Invariant | Mô tả |

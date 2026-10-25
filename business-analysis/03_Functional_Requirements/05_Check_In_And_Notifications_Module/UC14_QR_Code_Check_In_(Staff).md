@@ -1,4 +1,6 @@
-﻿# UC14 — Quét QR Code Check-In Tại Cổng (QR Code Check-In)
+# UC14 — Quét QR Code Check-In Tại Cổng (QR Code Check-In)
+
+> **Phạm vi:** check-in online là baseline; khi không thể kết nối để xác thực, scanner fail-closed theo D-023; không có offline check-in.
 
 ## 1. Thông Tin Chung
 
@@ -8,28 +10,61 @@
 | **Tên Use Case** | Quét QR Code Check-In Tại Cổng (QR Code Check-In) |
 | **Module** | 05 — Check-In & Notifications Module |
 | **Actor chính** | Check-in Staff (Nhân viên soát vé tại cổng) |
-| **Actor phụ** | Khách tham dự (Attendee), Gate Supervisor (Giám sát cổng), Check-in Service, Local Cache / Offline DB |
+| **Actor phụ** | Khách tham dự (Attendee), Gate Supervisor, Check-in Service; không dùng local cache làm nguồn xác thực |
 | **Mức độ ưu tiên** | 🔴 Critical |
-| **Precondition** | Nhân viên soát vé đã đăng nhập thiết bị chuyên dụng hoặc ứng dụng di động Check-in App với quyền `ROLE_STAFF`; thiết bị đã được gán vào Cổng (Gate ID) và Khu vực (Zone ID) tương ứng; concert đang trong khung giờ check-in hợp lệ (từ $T - 3$ giờ trước giờ diễn) |
+| **Precondition** | Nhân viên soát vé đã đăng nhập thiết bị chuyên dụng hoặc ứng dụng Check-in App với quyền `ROLE_STAFF`; thiết bị được gán Gate/Zone; thời điểm hiện tại nằm trong khung check-in cấu hình của concert (từ `gate_open_time` đến `end_time + buffer`) |
 | **Postcondition** | Vé hợp lệ được chuyển sang trạng thái `CHECKED`, ghi nhận thời gian và cổng vào; vé không hợp lệ bị từ chối kèm lý do rõ ràng |
-| **BR liên quan** | BR-TCK-001 (Dynamic QR chống gian lận), BR-TCK-002 (Nguyên tắc vé một lần quét duy nhất), BR-TCK-003 (Vé bị hủy không được check-in) |
+| **BR liên quan** | BR-TCK-002 (Dynamic QR), BR-TCK-003 (Single Check-in và từ chối vé đã hủy), BR-TCK-004 (phân quyền Gate/Zone), BR-TCK-005 (fail-closed khi mất mạng), BR-TCK-007 (khung giờ mở cổng) |
 
 ---
 
 ## 2. Tóm Tắt
 
-Use case này mô tả nghiệp vụ xác thực vé vào cổng trực tiếp tại địa điểm biểu diễn thông qua quét mã QR Code. Hệ thống đòi hỏi tốc độ phản hồi cực nhanh ($\le 500\text{ ms}$) để đảm bảo lưu thông liên tục cho hàng chục nghìn khán giả, chống gian lận dùng lại vé (double-scanning), chống chụp ảnh màn hình bán lại (Dynamic TOTP QR) và có cơ chế hoạt động ngoại tuyến (Offline Mode) đề phòng nghẽn sóng di động tại sân vận động.
+Use case này mô tả check-in online bằng QR tại cổng, mục tiêu phản hồi ≤500 ms, chống quét vé trùng và xác thực trạng thái trên server. Khi không thể kết nối để xác thực, scanner fail-closed theo D-023.
 
 ---
+
+<!-- BEGIN MERMAID USE-CASE UC14 -->
+### Sơ đồ Use Case (Mermaid)
+
+```mermaid
+flowchart LR
+  staff["👤 Check-in Staff"]
+  attendee["👤 Khách tham dự"]
+  supervisor["👤 Gate Supervisor"]
+  subgraph SYS["Concert Ticketing System — UC14"]
+    direction TB
+    present(["Xuất trình Dynamic QR tại cổng"])
+    scan(["Quét và xác thực QR online"])
+    validate(["Kiểm tra chữ ký, hạn token, trạng thái vé và gate"])
+    checkIn(["Đánh dấu vé CHECKED một lần"])
+    reject(["Từ chối QR không hợp lệ hoặc đã sử dụng"])
+    manual(["Tra cứu và hỗ trợ check-in thủ công"])
+    monitor(["Theo dõi lưu lượng cổng"])
+  end
+  attendee --- present
+  staff --- scan
+  present --- scan
+  scan -.->|«bao gồm»| validate
+  validate -.->|«nếu hợp lệ»| checkIn
+  validate -.->|«nếu không hợp lệ»| reject
+  staff --- manual
+  supervisor --- monitor
+  note["Baseline: xác thực online, fail-closed khi mất mạng theo D-023. QR dùng JWT/JWS RS256, làm mới mỗi 30 giây, token sống tối đa 60 giây."]
+  validate -.-> note
+  classDef actor fill:#fff,stroke:#334155,stroke-width:1px
+  class staff,attendee,supervisor actor
+```
+<!-- END MERMAID USE-CASE UC14 -->
 
 ## 3. Luồng Chính A — Quét QR Code Online Thành Công (Standard Gate Check-In)
 
 | Bước | Actor | Hành động | Phản hồi hệ thống |
 |---|---|---|---|
-| 1 | Khách hàng | Mở ứng dụng di động hoặc Web app trên điện thoại, đưa màn hình hiển thị Dynamic QR Code lại gần camera quét của nhân viên | Mã QR hiển thị kèm hiệu ứng đếm lùi thời gian còn hiệu lực (30 giây/chu kỳ) |
-| 2 | Check-in Staff | Hướng thiết bị quét (Handheld Scanner hoặc điện thoại Staff) vào mã QR | Ống kính bắt mã QR và đọc chuỗi payload mã hóa |
-| 3 | System | Giải mã payload, kiểm tra chữ ký điện tử HMAC/JWT và gửi request xác thực tới Check-in Service | Hệ thống kiểm tra trong Redis Cache và DB: 1. Mã hợp lệ; 2. Đúng concert & Zone; 3. Trạng thái hiện tại là `ORDERED` |
-| 4 | System | Cập nhật nguyên tử trạng thái vé: `ticket.status = CHECKED`, lưu `checked_in_at = NOW()`, `checked_in_by = staff_id`, `gate_id = G01` | Thực thi thành công trong vòng $\le 300\text{ ms}$ |
+| 1 | Khách hàng | Mở ứng dụng di động hoặc Web app trên điện thoại, đưa màn hình hiển thị Dynamic QR Code lại gần camera quét của nhân viên | Mã QR được làm mới mỗi 30 giây; mỗi token có hiệu lực tối đa 60 giây |
+| 2 | Check-in Staff | Hướng thiết bị quét (Handheld Scanner hoặc điện thoại Staff) vào mã QR | Ống kính bắt mã QR và đọc chuỗi JWT compact JWS |
+| 3 | System | Đọc payload JWT, xác thực chữ ký RS256 bằng public key và gửi request xác thực tới Check-in Service | Hệ thống kiểm tra trong Redis Cache và DB: 1. Mã hợp lệ; 2. Đúng concert & Zone; 3. Trạng thái hiện tại là `ORDERED` |
+| 4 | System | Cập nhật nguyên tử trạng thái vé: `ticket.status = CHECKED`, lưu `checked_in_at = SYSUTCDATETIME()`, `checked_in_by = staff_id`, `gate_id = G01` | Thực thi thành công trong vòng $\le 300\text{ ms}$ |
 | 5 | Staff Device | Thiết bị nhận tín hiệu thành công | Màn hình nhấp nháy **Xanh Lá Cây**, phát âm thanh "Bíp" ngân cao thành công, rung nhẹ máy, hiển thị: *"HỢP LỆ — MỜI VÀO: [Tên khách] - Khu vực [VIP 1] - Hàng [A] - Số [12]"* |
 | 6 | Check-in Staff | Báo khách hàng bước qua cổng an ninh | Khách tiến vào khán đài |
 
@@ -37,16 +72,14 @@ Use case này mô tả nghiệp vụ xác thực vé vào cổng trực tiếp t
 
 ## 4. Luồng Thay Thế (Alternative Flows)
 
-### AF-01: Chế Độ Soát Vé Ngoại Tuyến (Offline Mode Fallback)
-| Bước | Mô tả |
-|---|---|
-| 1 | Tại sân vận động mạng 4G/Wifi bị quá tải hoặc mất kết nối máy chủ hoàn toàn (> 3 giây không nhận phản hồi heartbeat). |
-| 2 | Ứng dụng Staff tự động kích hoạt **Chế độ Ngoại tuyến (Offline Mode)**, hiển thị banner cảnh báo màu vàng trên màn hình: *"Đang hoạt động Offline"*. |
-| 3 | Thiết bị sử dụng cơ sở dữ liệu SQLite cục bộ (được đồng bộ trước sự kiện gồm: Khóa công khai giải mã chữ ký số, danh sách mã băm vé hợp lệ của cổng). |
-| 4 | Ứng dụng xác minh chữ ký cục bộ, kiểm tra trùng lặp trong bộ nhớ máy cục bộ; nếu hợp lệ thì hiển thị chấp nhận và lưu lượt check-in vào hàng đợi cục bộ (Local Sync Queue). |
-| 5 | Khi mạng được khôi phục, ứng dụng tự động gửi toàn bộ lịch sử check-in offline lên máy chủ trung tâm để hợp nhất dữ liệu (Eventual Consistency Reconciliation). |
+### AF-01: Mất kết nối tới dịch vụ xác thực — từ chối đóng cửa fail-closed
 
-### AF-02: Check-In Thủ Công Tại Quầy Hỗ Trợ (Manual Helpdesk Lookup)
+| Bước | Hành vi bắt buộc |
+|---|---|
+| 1 | Scanner không nhận được phản hồi xác thực online hoặc mất kết nối tới Check-in Service. |
+| 2 | Ứng dụng hiển thị lỗi kết nối; không báo vé hợp lệ, không ghi ticket CHECKED và không chấp nhận QR chỉ từ cache hoặc nội dung JWT. |
+| 3 | Nhân viên hướng khách tới Gate Supervisor/quầy hỗ trợ theo quy trình vận hành của địa điểm; quy trình này không được bypass kiểm tra trạng thái vé trên server. |
+| 4 | Khi mạng phục hồi, staff quét lại. Mỗi yêu cầu scan dùng idempotency/scan ID để retry không tạo check-in trùng. |### AF-02: Check-In Thủ Công Tại Quầy Hỗ Trợ (Manual Helpdesk Lookup)
 | Bước | Mô tả |
 |---|---|
 | 1 | Khách hàng gặp sự cố: Điện thoại hết pin, vỡ màn hình không hiển thị được mã QR, hoặc không nhận được email vé. |
@@ -73,7 +106,7 @@ Use case này mô tả nghiệp vụ xác thực vé vào cổng trực tiếp t
 | EX-01 | **Vé đã được check-in trước đó (Duplicate Scan / Đã sử dụng)** | Màn hình nhấp nháy **ĐỎ RỰC**, phát còi cảnh báo lớn "Tít tít tít", rung mạnh thiết bị. Hiển thị thông báo: *"CẢNH BÁO: VÉ ĐÃ ĐƯỢC CHECK-IN LÚC 18:25 TẠI CỔNG B-02 BỞI NHÂN VIÊN #12"*. Nhân viên giữ người cầm vé và bàn giao giám sát an ninh | `TICKET_ALREADY_USED` |
 | EX-02 | **Vé đã bị hủy hoặc hoàn tiền (Cancelled / Refunded Ticket)** | Màn hình hiển thị màu ĐỎ: *"VÉ KHÔNG HỢP LỆ — Vé đã bị hủy/hoàn tiền theo yêu cầu ngày DD/MM"*. Từ chối vào cổng | `TICKET_CANCELLED_OR_REFUNDED` |
 | EX-03 | **Sai cổng hoặc sai khu vực (Wrong Gate / Wrong Zone)** | Màn hình hiển thị màu VÀNG CAM kèm âm báo cảnh báo: *"SAI CỔNG — Vé thuộc Khu vực [STAND C - CỔNG 4]. Vui lòng hướng dẫn khách sang Cổng 4"*. Vé chưa bị đổi trạng thái | `WRONG_GATE_OR_ZONE` |
-| EX-04 | **Mã QR đã hết hạn (TOTP Token Expired)** | Khách hàng chụp ảnh màn hình từ trước và mã cũ đã quá hạn (hoặc đồng hồ lệch quá 60 giây). Thiết bị báo: *"MÃ QR ĐÃ HẾT HẠN — Vui lòng mở trực tiếp ứng dụng để lấy mã mới"* | `QR_TOKEN_EXPIRED` |
+| EX-04 | **Mã QR đã hết hạn (JWT Token Expired)** | Khách hàng chụp ảnh màn hình từ trước và mã cũ đã quá hạn (hoặc đồng hồ lệch quá 60 giây). Thiết bị báo: *"MÃ QR ĐÃ HẾT HẠN — Vui lòng mở trực tiếp ứng dụng để lấy mã mới"* | `QR_TOKEN_EXPIRED` |
 | EX-05 | **Mã QR giả mạo / Không hợp lệ (Invalid Signature)** | Chữ ký điện tử trong payload không khớp với khóa công khai của hệ thống. Báo động: *"MÃ VÉ KHÔNG TỒN TẠI HOẶC BỊ LÀM GIẢ"* | `INVALID_SIGNATURE` |
 
 ---
@@ -81,22 +114,21 @@ Use case này mô tả nghiệp vụ xác thực vé vào cổng trực tiếp t
 ## 6. Cấu Trúc Dữ Liệu Payload Của Mã QR & Bản Ghi Check-In
 
 ### 1. Payload Mã QR Động (Dynamic QR Token Structure)
-Mã QR hiển thị trên ứng dụng người dùng không chứa dữ liệu thô lộ liễu mà là một chuỗi mã hóa ký số dạng JWS/JWT ngắn gọn:
+Mã QR hiển thị trên ứng dụng người dùng chứa JWS/JWT được ký số, không phải dữ liệu được mã hóa; các claim nhạy cảm không được đưa vào payload:
 ```json
 {
-  "tid": "tkt_9f8d7c6b-4e3a",
-  "cid": "con_2026_blackpink",
-  "zid": "zone_vip_a",
+  "ticket_id": "tkt_9f8d7c6b-4e3a",
+  "concert_id": "con_2026_blackpink",
+  "seat_id": "seat_vip_a_012",
   "iat": 1729774800,
-  "exp": 1729774830,
-  "nonce": "a8f3b2c1",
-  "sig": "MEQCIA..."
+  "exp": 1729774860,
+  "nonce": "a8f3b2c1"
 }
 ```
-- `tid` (Ticket ID): Định danh vé duy nhất
-- `exp` (Expiration Time): Thời gian hết hạn của token hiển thị (thường 30 đến 60 giây)
+- `ticket_id`, `concert_id`, `seat_id`: Định danh vé, concert và ghế; không chứa họ tên hoặc số điện thoại.
+- `exp` (Expiration Time): `iat + 60` giây; ứng dụng làm mới token mỗi 30 giây, token cũ không bị vô hiệu sớm chỉ do rotation
 - `nonce`: Chuỗi ngẫu nhiên chống replay attack
-- `sig`: Chữ ký số mã hóa bằng Private Key của hệ thống
+- Chữ ký RS256 nằm trong segment thứ ba của JWS; header chứa `alg = RS256` và `kid`, không đưa chữ ký vào payload JSON.
 
 ### 2. Bản Ghi Nhật Ký Soát Vé (Check-in Audit Record)
 
@@ -109,7 +141,7 @@ Mã QR hiển thị trên ứng dụng người dùng không chứa dữ liệu 
 | `staff_id` | UUID | Mã nhân viên thực hiện quét |
 | `device_id` | String | Mã phần cứng thiết bị quét |
 | `checkin_time` | Timestamp | Thời điểm chính xác (mili-giây) |
-| `checkin_mode` | Enum | `ONLINE` hoặc `OFFLINE_SYNC` |
+| checkin_mode | Enum | ONLINE hoặc MANUAL_OVERRIDE; không có OFFLINE_SYNC theo D-023 |
 | `result` | Enum | `SUCCESS`, `DUPLICATE_FAILED`, `WRONG_GATE`, `INVALID` |
 
 ---
@@ -130,20 +162,17 @@ Mã QR hiển thị trên ứng dụng người dùng không chứa dữ liệu 
 
 ---
 
-### US-14-02: Hoạt Động Check-In Ngoại Tuyến (Offline Resilience)
+### US-14-02: Từ chối check-in khi không xác thực được online
 > **As a** Gate Supervisor,  
-> **I want to** hệ thống soát vé vẫn hoạt động chính xác ngay cả khi mạng viễn thông tại sân vận động bị sập toàn bộ,  
-> **So that** việc kiểm soát an ninh vào cửa không bị gián đoạn hay phải mở cổng xả tự do.
+> **I want to** scanner không chấp nhận vé nếu không thể hỏi trạng thái mới nhất từ server,<br>
+> **So that** vé không bị dùng trùng tại nhiều cổng hoặc sau khi bị hủy.
 
 | Mã AC | Tiêu chí nghiệm thu (Acceptance Criteria) | Phân loại |
 |---|---|---|
-| AC-14-02-01 | Ứng dụng Staff cho phép tải trước dữ liệu vé của cổng phụ trách về bộ nhớ thiết bị trước giờ mở cửa $T - 4$ giờ | Functional |
-| AC-14-02-02 | Khi mất mạng, ứng dụng chuyển sang chế độ Offline trong vòng không quá 2 giây và tiếp tục cho phép quét vé bình thường | Reliability |
-| AC-14-02-03 | Thiết bị lưu vết toàn bộ lượt quét offline vào SQLite cục bộ và tự động đồng bộ lên máy chủ trung tâm ngay khi có sóng trở lại | Reliability |
-| AC-14-02-04 | Trường hợp có xung đột (VD vé quét offline ở cổng 1 nhưng trước đó đã quét online ở cổng 2), hệ thống trung tâm ghi nhận cờ xung đột để an ninh xử lý | Security |
-
----
-
+| AC-14-02-01 | Mất kết nối/timeout phải hiện trạng thái không xác định hoặc lỗi mạng; không hiện tín hiệu xanh, không đổi ticket sang CHECKED. | Security |
+| AC-14-02-02 | Cache hoặc chữ ký JWT hợp lệ không đủ để xác nhận check-in khi không truy vấn được trạng thái vé online. | Security |
+| AC-14-02-03 | Khi mạng phục hồi, scan retry cùng scan ID không tạo thêm log thành công hoặc chuyển trạng thái lần hai. | Reliability |
+| AC-14-02-04 | UI hướng dẫn nhân viên chuyển sự cố cho Gate Supervisor; mọi manual override phải thực hiện online, có quyền hạn và audit reason. | Operational |
 ### US-14-03: Thống Kê Tiến Độ Check-In Thời Gian Thực Cho Ban Tổ Chức
 > **As an** Organizer / Gate Supervisor,  
 > **I want to** xem số lượng khán giả đã vào sân theo từng cổng và từng zone theo thời gian thực,  
@@ -163,8 +192,7 @@ Mã QR hiển thị trên ứng dụng người dùng không chứa dữ liệu 
 |---|---|---|---|---|
 | **UC14.1** | Đăng Nhập & Gán Cổng Soát Vé (Assign Gate) | Check-in Staff | Gate Supervisor | Thiết lập cổng và Zone phụ trách cho ca trực |
 | **UC14.2** | Quét Mã QR Xác Thực Vé Tốc Độ Cao | Check-in Staff | Check-in Service, Redis | Soát vé luồng bình thường |
-| **UC14.3** | Xử Lý Soát Vé Chế Độ Ngoại Tuyến (Offline Mode) | Check-in Staff | Local SQLite DB | Chống sự cố sập mạng viễn thông |
+| **UC14.3** | Từ chối check-in khi xác thực online không khả dụng | Check-in Staff | Check-in Service | Fail-closed, không chấp nhận cache cục bộ |
 | **UC14.4** | Check-In Thủ Công Tại Bàn Trợ Giúp (Helpdesk Override) | Gate Supervisor, Staff | Customer Service DB | Hỗ trợ vé vỡ màn hình, hết pin, đối chiếu CCCD |
-| **UC14.5** | Đồng Bộ Dữ Liệu Check-In Ngược Lên Máy Chủ | Check-in Staff App | Sync Worker Service | Hợp nhất dữ liệu offline |
-| **UC14.6** | Giám Sát Lưu Lượng Ra Vào Theo Cổng Real-Time | Gate Supervisor, Organizer | Analytics Service | Giám sát an ninh và điều tiết khán giả |
 
+| **UC14.6** | Giám Sát Lưu Lượng Ra Vào Theo Cổng Real-Time | Gate Supervisor, Organizer | Analytics Service | Giám sát an ninh và điều tiết khán giả |

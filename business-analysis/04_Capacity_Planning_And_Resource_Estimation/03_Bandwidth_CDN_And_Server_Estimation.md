@@ -1,11 +1,11 @@
-﻿# 03 — Ước Tính Băng Thông, CDN & Số Lượng Máy Chủ (Bandwidth, CDN & Server Estimation)
+# 03 — Ước Tính Băng Thông, CDN & Số Lượng Máy Chủ (Bandwidth, CDN & Server Estimation)
 
 ## 1. Giới Thiệu & Mục Tiêu
 
 Tài liệu này lượng hóa chi tiết:
 1. **Lưu lượng mạng & Băng thông (Network Bandwidth & Egress):** Phân tích lưu lượng truyền tải dữ liệu chiều vào (Ingress) và chiều ra (Egress) trong trạng thái bình thường và giờ cao điểm mở bán vé.
 2. **Chiến lược CDN (Content Delivery Network):** Tỷ lệ phân tán tải tại biên mạng (Edge Caching), mục tiêu tỷ lệ trúng bộ đệm (CDN Hit Rate) và cách CDN bảo vệ cụm máy chủ gốc (Origin Shielding).
-3. **Quy hoạch Máy chủ & Tài nguyên Tính toán (Compute Sizing & Instance Estimation):** Tính toán số lượng Pods / Nodes / Servers cần thiết cho từng tầng kiến trúc (API Gateway, Microservices, Worker, Database, Redis, spring-async) và quy tắc co giãn tự động (Horizontal Pod Autoscaler - HPA).
+3. **Quy hoạch Máy chủ & Tài nguyên Tính toán (Compute Sizing & Instance Estimation):** Tính toán số lượng Pods / Nodes / Servers cần thiết cho từng tầng kiến trúc (API Gateway, Microservices, Worker, Database, Redis, message broker) và quy tắc co giãn tự động (Horizontal Pod Autoscaler - HPA).
 
 ---
 
@@ -70,12 +70,12 @@ Hệ thống được đóng gói dạng Container Docker và điều phối tr�
 
 | Thành phần hạ tầng | Cấu hình phần cứng tối thiểu | Số lượng Nodes | Vai trò & Cơ chế chịu lỗi |
 |---|---|---|---|
-| **MySQL 8.0 Primary (Write)** | 16 vCPU, 64 GB RAM, 1 TB NVMe SSD (IOPS 10.000) | 1 Master Active | Xử lý toàn bộ giao dịch ghi (`orders`, `tickets`, `seat_holds`) |
-| **MySQL 8.0 Read Replicas** | 16 vCPU, 64 GB RAM, 1 TB NVMe SSD | 2 Replicas Hot-Standby | Chia tải truy vấn đọc, báo cáo, và tự động failover (Patroni HA) |
-| **HikariCP / ProxySQL (Connection Pooler)** | 4 vCPU, 8 GB RAM | 2 nodes Active-Active | Duy trì tối đa 10.000 client connections, gom về 200 pool connections |
+| **SQL Server Primary (Write)** | Sizing phần cứng/licensing cần benchmark (D-030) | Primary theo topology D-026 | Xử lý giao dịch ghi; thông số hiện tại chỉ là giả định sizing |
+| **SQL Server synchronous readable secondary + async DR replica** | Sizing/licensing theo D-026/D-030 | Một synchronous readable secondary và một asynchronous cross-region DR replica theo D-026 | Topology HA/DR đã chọn; đọc secondary chỉ cho truy vấn đủ điều kiện; thời gian thực tế phải đo trước go-live |
+| **HikariCP (connection pools)** | Không phải node hạ tầng riêng | Pool tại mỗi JVM; tổng ngân sách theo D-030 | Pool đọc/ghi riêng, sizing theo D-030 |
 | **Redis Cluster (In-Memory)** | 8 vCPU, 16 GB RAM, High Network Bandwidth (10 Gbps) | 6 nodes (3 Master + 3 Replica) | Phân mảnh dữ liệu khóa ghế, hàng chờ ảo, chia đều tải I/O bộ nhớ |
-| **Spring @Async Events Cluster** | 8 vCPU, 16 GB RAM, 500 GB NVMe SSD | 3 Brokers (KRaft mode) | Tiếp nhận luồng sự kiện phân tán, Replication Factor = 3 |
-| **Elasticsearch Cluster** | 8 vCPU, 32 GB RAM, 1 TB SSD | 3 Data Nodes | Phục vụ tìm kiếm concert và phân tích nhật ký tập trung |
+| **RabbitMQ** | Sizing/HA cần benchmark gate D-030 | Cluster theo RabbitMQ baseline D-025 | Durable queues, retry/DLQ; sizing theo measured message rate, retention, queue depth, unacked messages và oldest-message age; không dùng Kafka replication assumptions |
+| **Log/search store** | Engine và sizing theo D-029 | Chưa chốt | Thành phần phụ; không làm nguồn dữ liệu giao dịch |
 
 ---
 
@@ -88,13 +88,42 @@ Hệ thống được đóng gói dạng Container Docker và điều phối tr�
 - **Ngưỡng Memory:** Co giãn khi mức sử dụng RAM vượt quá **$75\%$**.
 - **Chỉ số tùy biến (Custom Metric - Prometheus / KEDA):**
   - Đối với `Waiting Room Service`: Co giãn dựa trên tổng số CCU đang kết nối (`active_connections > 5.000 / pod`).
-  - Đối với `Notification Worker`: Co giãn dựa trên độ dài hàng đợi spring-async (`spring-async_consumergroup_lag > 1.000 messages`).
+  - Đối với Notification Worker: co giãn theo queue depth, unacked messages và tuổi message lâu nhất của RabbitMQ; ngưỡng và giới hạn pod chốt sau benchmark D-030.
 
 ### 2. Cơ Chế Warm-Up Chủ Động (Scheduled Pre-Warming)
 Vì cơ chế tự động co giãn bằng chỉ số CPU thường mất từ 2 đến 4 phút để khởi động và sẵn sàng (Container Startup Time + Readiness Probe), hệ thống áp dụng chính sách **Pre-Warming theo lịch trình**:
 - Trước giờ mở bán Mega Concert **30 phút**, Quản trị viên kích hoạt chế độ "Sắp mở bán" (Scheduled Warm-Up).
 - Hệ thống tự động nâng số lượng Pods của toàn bộ ứng dụng Modular Monolith lên mức tối đa dự kiến ($84\text{ pods}$) và kiểm tra tính sẵn sàng trước khi dòng người đầu tiên truy cập.
 - Sau khi vé đã bán hết hoặc sau $T + 60$ phút, hệ thống tự động hạ dần số lượng Pods về mức bình thường (Scale-Down Cooldown Period = 15 phút) để tránh hiện tượng co giật tài nguyên (Flapping).
+
+<!-- BEGIN MERMAID DIAGRAM CAP-NETWORK -->
+### Đường đi mạng và co giãn hạ tầng
+
+```mermaid
+flowchart TB
+  clients["Web / Mobile / Staff clients"]
+  edge["DNS + CDN PoPs<br/>static assets and eligible public content"]
+  origin["S3 object origin"]
+  lb["L4 / L7 load balancing and API Gateway"]
+  app["Kubernetes App Pods<br/>Horizontal Pod Autoscaler"]
+  redis["Redis Cluster"]
+  sql[("SQL Server Primary / readable secondary<br/>Always On AG per D-026; sizing/license gate D-030")]
+  broker["Message broker<br/>RabbitMQ selected by D-025"]
+  worker["Worker Pods<br/>autoscale separately"]
+  payments["VNPay / MoMo"]
+  clients --> edge --> lb --> app
+  edge -.->|cache miss / static origin| origin
+  app <--> redis
+  app --> sql
+  app <--> payments
+  app --> broker --> worker
+  worker --> payments
+  worker --> sql
+  note["Realtime and sensitive APIs must follow the cache policy in the NFR document; do not infer static CDN caching for checkout, queue status, or seat holds."]
+  lb -.-> note
+```
+<!-- END MERMAID DIAGRAM CAP-NETWORK -->
+
 
 ---
 
@@ -103,7 +132,7 @@ Vì cơ chế tự động co giãn bằng chỉ số CPU thường mất từ 2
 | Hạng mục tài nguyên | Quy mô triển khai giờ cao điểm | Quy mô duy trì ngày thường | Chiến lược tối ưu chi phí |
 |---|---|---|---|
 | **Cụm Máy tính Kubernetes (EKS / GKE)** | 10 – 12 VM Nodes lớn (c6g.4xlarge - 16 vCPU) | 3 – 4 VM Nodes tiêu chuẩn (c6g.xlarge - 4 vCPU) | Sử dụng kiến trúc chip ARM64 (AWS Graviton) tiết kiệm $20\%$ chi phí; Dùng Spot Instances cho tầng Worker xử lý nền |
-| **Tầng Cơ sở Dữ liệu (Managed MySQL 8.0)** | 1 Master + 2 Replicas (db.r6g.4xlarge) | 1 Master + 1 Replica (db.r6g.xlarge) | Tự động tăng kích thước Read Replica trước giờ mở bán sự kiện lớn |
+| **Tầng Cơ sở Dữ liệu SQL Server** | SKU, CPU/RAM, storage và licensing chờ benchmark (D-030) | Primary/readable-secondary topology theo D-026 | Chỉ chốt sau khi xác nhận nền tảng hỗ trợ SQL Server |
 | **Tầng Bộ nhớ Đệm (Redis Cluster)** | 6 Nodes (cache.r6g.xlarge) | 6 Nodes (cache.r6g.large) | Duy trì cấu hình cố định đảm bảo độ sẵn sàng cao |
 | **Băng thông & CDN (Cloudflare / CloudFront)** | Đỉnh $64\text{ Gbps}$ (chủ yếu tại Edge) | Trung bình $100\text{ Mbps}$ | Tận dụng gói Flat-Rate Enterprise của CDN để chặn chi phí phát sinh bất thường khi bị tấn công DDoS |
 

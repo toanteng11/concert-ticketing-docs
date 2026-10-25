@@ -1,4 +1,4 @@
-﻿# Bối Cảnh Kinh Doanh & Phạm Vi Hệ Thống (Business Context & System Scope)
+# Bối Cảnh Kinh Doanh & Phạm Vi Hệ Thống (Business Context & System Scope)
 
 ## 1. Bối Cảnh Kinh Doanh (Business Context)
 
@@ -30,7 +30,7 @@ Hệ thống phải giải quyết được 3 thách thức cốt lõi:
 |---|---|---|
 | BG-01 | Nền tảng bán vé tập trung dành cho thị trường Việt Nam | ≥ 10 concert quy mô lớn (>10,000 vé) mỗi tháng trong năm đầu |
 | BG-02 | Đảm bảo công bằng cho khách hàng qua phòng chờ ảo | Tỷ lệ khiếu nại "mua vé không công bằng" < 1% |
-| BG-03 | Hệ thống không sập trong đợt mở bán đỉnh | Uptime ≥ 99.95% trong giờ mở bán; P99 latency < 2 giây |
+| BG-03 | Duy trì khả dụng cho giao dịch mua vé | SLO 99.95% mỗi tháng cho critical first-party purchase APIs; P99 latency theo mục tiêu NFR và đo độc lập với lỗi nhà cung cấp thanh toán (D-027) |
 | BG-04 | Zero double-booking | Tỷ lệ lỗi trùng ghế = 0% |
 | BG-05 | Vé điện tử bảo mật, chống giả mạo | Tỷ lệ vé giả bị phát hiện qua cổng = 0% |
 | BG-06 | Tạo doanh thu nền tảng qua phí dịch vụ | Phí dịch vụ 5–10% trên mỗi vé bán thành công |
@@ -64,7 +64,7 @@ C4Context
     Rel(customer, cts, "Xem concert, vào phòng chờ,\nchọn ghế, thanh toán, nhận vé QR", "HTTPS / WebSocket")
     Rel(organizer, cts, "Tạo concert, thiết kế sơ đồ,\ntheo dõi dashboard", "HTTPS")
     Rel(admin, cts, "Phê duyệt, giám sát,\nxử lý sự cố", "HTTPS")
-    Rel(staff, cts, "Quét vé QR tại cổng\ntheo ca sự kiện", "HTTPS / Offline QR")
+    Rel(staff, cts, "Quét và xác thực vé QR trực tuyến tại cổng", "HTTPS; fail-closed khi mất mạng theo D-023")
 
     Rel(cts, vnpay, "Khởi tạo giao dịch thanh toán\n& nhận IPN webhook", "HTTPS API")
     Rel(cts, momo, "Khởi tạo giao dịch thanh toán\n& nhận IPN webhook", "HTTPS API")
@@ -115,7 +115,7 @@ sequenceDiagram
     OR->>OR: Xác thực HMAC chữ ký + khớp số tiền
     OR->>SS: Chốt ghế → seat.status = SOLD
     OR->>TK: Tạo vé điện tử (ticket.status = ORDERED)
-    TK->>TK: Sinh Dynamic QR Code (JWT/HMAC)
+    TK->>TK: Sinh Dynamic QR Code (JWT/JWS, RS256)
     TK->>NT: Trigger gửi thông báo
 
     NT-->>C: Email + Push Notification: "Vé của bạn đã sẵn sàng"
@@ -159,7 +159,7 @@ sequenceDiagram
 
     alt Vé hợp lệ (status = ORDERED)
         TK-->>API: Trả về thông tin vé
-        API->>TK: UPDATE ticket SET status = CHECKED,<br/>checked_in_at = NOW()
+        API->>TK: UPDATE ticket SET status = CHECKED,<br/>checked_in_at = SYSUTCDATETIME()
         API-->>APP: ✅ HỢP LỆ — Tên: Nguyen Van A | Hạng: VIP | Ghế: A12
         APP-->>S: Hiển thị màn hình xanh + tiếng bíp xanh
     else Vé đã check-in trước đó (status = CHECKED)
@@ -183,14 +183,14 @@ sequenceDiagram
 | **Phòng chờ ảo & Xếp hàng** | Cơ chế Waiting Room T-15 phút, Shuffle ngẫu nhiên T0, FIFO người đến sau, Giới hạn 5.000 CCU trong khu chọn ghế |
 | **Sơ đồ ghế tương tác** | Hiển thị sơ đồ khán phòng thời gian thực, màu sắc phân biệt AVAILABLE/HELD/SOLD/BLOCKED, cập nhật qua WebSocket |
 | **Đặt vé & Thanh toán** | Tạo đơn hàng, tích hợp VNPay và MoMo, xử lý IPN webhook, Idempotency Key |
-| **Vé điện tử & QR Code** | Phát hành vé tức thì sau thanh toán, Dynamic QR TOTP/JWT, PDF vé gửi email |
-| **Check-in cổng vào** | App Staff mobile (iOS/Android), quét QR online/offline, đồng bộ dữ liệu check-in |
+| **Vé điện tử & QR Code** | Phát hành vé tức thì sau thanh toán, QR động JWT/JWS ký RS256, PDF vé gửi email |
+| **Check-in cổng vào** | App Staff mobile (iOS/Android), quét QR online; online-only; khi mất kết nối scanner fail-closed theo D-023 |
 | **Quản lý Concert** | Organizer Portal: Tạo concert, thiết kế sơ đồ ghế, giá vé, Dashboard real-time |
 | **Phê duyệt & Vận hành** | Admin Dashboard: Phê duyệt concert, giám sát hệ thống, xử lý sự cố |
 | **Hoàn tiền & Hủy vé** | Quy trình hủy đơn, hoàn tiền theo chính sách phân bậc, hủy concert hàng loạt |
 | **Đánh giá & Nhận xét** | Chức năng review sau concert dành cho khách đã tham dự |
 | **Thông báo đa kênh** | Push notification, Email, SMS cho các sự kiện: vé, thanh toán, hủy, nhắc nhở |
-| **Báo cáo & Quyết toán** | Báo cáo doanh thu cho Organizer, đối soát giao dịch Admin, giải ngân sau concert |
+| **Báo cáo & Quyết toán** | Báo cáo doanh thu cho Organizer, đối soát giao dịch Admin, lập/phê duyệt hồ sơ payout theo hợp đồng sau concert; baseline lưu tham chiếu và bằng chứng, không giả định escrow hay chuyển khoản tự động (D-034) |
 
 ### 4.2 Những gì KHÔNG NẰM TRONG phạm vi hệ thống (Out of Scope)
 
@@ -241,9 +241,9 @@ graph TB
 
 | ID | Ràng buộc | Chi tiết |
 |---|---|---|
-| TC-01 | Quy mô người dùng | 2 triệu tài khoản đăng ký; đỉnh CCU đồng thời trong giờ mở bán có thể lên đến 500.000 người |
+| TC-01 | Quy mô người dùng | 2 triệu tài khoản đăng ký; baseline đỉnh 100.000 CCU trong giờ mở bán; mức 500.000 CCU là future planning scenario; baseline release gate là 100.000 CCU (D-009/D-030) |
 | TC-02 | Giới hạn khu chọn ghế | Tối đa 5.000 CCU trong khu chọn ghế của 1 concert tại 1 thời điểm |
-| TC-03 | SLA Uptime | Uptime tối thiểu 99.95% đối với luồng mua vé; 99.9% với các tính năng phụ |
+| TC-03 | Availability SLO | 99.95% monthly for critical first-party purchase APIs only, per D-027; separate provider failures; no contractual SLA |
 | TC-04 | Độ trễ giữ ghế | API khóa ghế phải hoàn thành trong < 500ms ở P95 dưới tải đỉnh |
 | TC-05 | Đa nền tảng | Hỗ trợ đồng thời Web (PWA-ready), iOS App native và Android App native |
 | TC-06 | Múi giờ | Toàn bộ dữ liệu lưu trữ UTC; hiển thị UI theo múi giờ ICT (UTC+7) |
@@ -256,7 +256,7 @@ graph TB
 | AS-01 | Organizer đã ký hợp đồng hợp tác với nền tảng trước khi được cấp tài khoản và tạo concert |
 | AS-02 | Cổng thanh toán VNPay và MoMo đã hoàn tất thủ tục ký kết và cấp API credentials cho môi trường Production |
 | AS-03 | Hệ thống không phải cơ quan cấp vé giấy vật lý; toàn bộ vé là vé điện tử (E-Ticket) kèm mã QR |
-| AS-04 | Mạng internet tại địa điểm tổ chức sự kiện được đảm bảo đủ băng thông cho check-in; cơ chế Offline là dự phòng khẩn cấp |
+| AS-04 | Mạng internet tại địa điểm tổ chức sự kiện được giả định đủ băng thông; check-in offline ngoài baseline theo D-023; scanner fail-closed khi mất mạng |
 | AS-05 | Khán giả có điện thoại thông minh hiển thị màn hình; tính năng in vé PDF là phương án dự phòng cho người cao tuổi |
 | AS-06 | Admin sẽ xử lý phê duyệt concert trong SLA 48 giờ; hệ thống cảnh báo nếu quá hạn |
 

@@ -21,6 +21,47 @@ Use case này mô tả cách người dùng mới đăng ký tài khoản trên 
 
 ---
 
+<!-- BEGIN MERMAID USE-CASE UC01 -->
+### Sơ đồ Use Case (Mermaid)
+
+```mermaid
+flowchart LR
+  guest["👤 Khách vãng lai"]
+  customer["👤 Khách hàng"]
+  google["Google OAuth2 Provider"]
+  apple["Apple ID Provider"]
+  sms["SMS Gateway"]
+  subgraph SYS["Concert Ticketing System — UC01"]
+    direction TB
+    register(["Đăng ký bằng email hoặc số điện thoại"])
+    otp(["Xác thực OTP"])
+    credentialLogin(["Đăng nhập bằng thông tin xác thực"])
+    googleLogin(["Đăng nhập hoặc đăng ký qua Google"])
+    appleLogin(["Đăng nhập hoặc đăng ký qua Apple ID"])
+    resetPassword(["Đặt lại mật khẩu"])
+    logout(["Đăng xuất"])
+  end
+  guest --- register
+  register -.->|«bao gồm khi dùng số điện thoại»| otp
+  sms --- otp
+  guest --- credentialLogin
+  customer --- credentialLogin
+  guest --- googleLogin
+  customer --- googleLogin
+  google --- googleLogin
+  guest --- appleLogin
+  customer --- appleLogin
+  apple --- appleLogin
+  guest --- resetPassword
+  customer --- resetPassword
+  customer --- logout
+  classDef actor fill:#fff,stroke:#334155,stroke-width:1px
+  classDef provider fill:#f1f5f9,stroke:#64748b,stroke-width:1px
+  class guest,customer actor
+  class google,apple,sms provider
+```
+<!-- END MERMAID USE-CASE UC01 -->
+
 ## 3. Điều Kiện Tiên Quyết (Preconditions)
 
 - Người dùng chưa có phiên đăng nhập hợp lệ (chưa có JWT Access Token).

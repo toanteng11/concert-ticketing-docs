@@ -1,4 +1,4 @@
-﻿# UC15 — Hệ Thống Thông Báo Đa Kênh (Notification System)
+# UC15 — Hệ Thống Thông Báo Đa Kênh (Notification System)
 
 ## 1. Thông Tin Chung
 
@@ -11,27 +11,73 @@
 | **Actor phụ** | Khách hàng (Customer - Người nhận), Email Gateway (SES/SendGrid), Push Service (FCM/APNs), SMS Gateway (Twilio/Brandname SMS) |
 | **Mức độ ưu tiên** | 🔴 High |
 | **Precondition** | Người nhận có tài khoản hoặc thông tin liên lạc hợp lệ (email, số điện thoại, FCM token); sự kiện nghiệp vụ được phát sinh từ các service nội bộ |
-| **Postcondition** | Thông điệp được phân phối qua các kênh đã cấu hình; trạng thái gửi (Sent/Delivered/Read/Failed) được lưu vết đầy đủ trong Audit Log |
+| **Postcondition** | Thông báo được ghi nhận và đưa qua hàng đợi bền vững; trạng thái PENDING/SENT/DELIVERED/READ/FAILED được lưu trong notifications; thao tác quản trị được audit. Provider delivery chỉ được xác nhận khi có receipt tương ứng |
 | **BR liên quan** | BR-NOTI-001 (Thông báo giao dịch bắt buộc), BR-NOTI-002 (Kênh dự phòng khi lỗi gửi tin), BR-NOTI-003 (Chống gửi tin lặp - Deduplication) |
 
 ---
 
 ## 2. Tóm Tắt
 
-Use case này đặc tả kiến trúc và quy trình xử lý của Hệ thống Thông báo Đa kênh (Omni-channel Notification Engine). Hệ thống tiếp nhận các sự kiện nghiệp vụ từ toàn bộ nền tảng (xác thực OTP, đặt hàng thành công, cảnh báo sắp hết giờ giữ ghế, thông báo hủy/đổi lịch concert, thông báo nhắc nhở trước giờ diễn) và tự động định tuyến thông điệp qua các kênh: **In-App Notification**, **Mobile/Web Push**, **Email Giao dịch**, và **SMS Brandname**.
+Use case này đặc tả kiến trúc và quy trình xử lý của Hệ thống Thông báo Đa kênh (Omni-channel Notification Engine). Hệ thống tiếp nhận sự kiện qua transactional outbox và RabbitMQ, gồm OTP, thay đổi đơn hàng, vé, hủy/đổi lịch concert, cảnh báo hết hạn giữ ghế và nhắc lịch diễn. Notification worker định tuyến theo ma trận kênh, consent và trạng thái địa chỉ; việc gửi qua nhà cung cấp là bất đồng bộ.
 
 ---
+
+<!-- BEGIN MERMAID USE-CASE UC15 -->
+### Sơ đồ Use Case (Mermaid)
+
+```mermaid
+flowchart LR
+  source["⚙️ Dịch vụ nghiệp vụ phát sinh sự kiện"]
+  admin["👤 Admin"]
+  organizer["👤 Organizer"]
+  customer["👤 Customer / Người nhận"]
+  email["Email Gateway"]
+  push["Push Service (FCM/APNs)"]
+  sms["SMS Gateway"]
+  subgraph SYS["Notification Engine — UC15"]
+    direction TB
+    transactional(["Tiếp nhận và gửi thông báo giao dịch"])
+    broadcast(["Gửi thông báo broadcast"])
+    route(["Định tuyến theo preference và kênh"])
+    dedupe(["Chống gửi trùng bằng deduplication key"])
+    inbox(["Xem thông báo trong hộp thư và trạng thái"])
+    preference(["Quản lý tùy chọn nhận thông báo"])
+    fallback(["Retry hoặc chuyển kênh dự phòng khi lỗi"])
+  end
+  source --- transactional
+  transactional -.->|«bao gồm»| dedupe
+  transactional -.->|«bao gồm»| route
+  admin --- broadcast
+  organizer --- broadcast
+  broadcast -.->|«bao gồm»| route
+  customer --- inbox
+  customer --- preference
+  route --- email
+  route --- push
+  route --- sms
+  route -.->|«khi gửi lỗi»| fallback
+  fallback --- email
+  fallback --- push
+  fallback --- sms
+  note["Theo dõi trạng thái Sent/Delivered/Read/Failed và lưu audit log. Việc gửi qua gateway là bất đồng bộ; hệ thống không thể bảo đảm nhà cung cấp luôn phân phối thành công. Thông báo giao dịch quan trọng không thể tắt hết mọi kênh."]
+  route -.-> note
+  classDef actor fill:#fff,stroke:#334155,stroke-width:1px
+  classDef provider fill:#f1f5f9,stroke:#64748b,stroke-width:1px
+  class source,admin,organizer,customer actor
+  class email,push,sms provider
+```
+<!-- END MERMAID USE-CASE UC15 -->
 
 ## 3. Luồng Chính A — Xử Lý Gửi Thông Báo Giao Dịch Tự Động (Transactional Notification)
 
 | Bước | Actor / Thành phần | Hành động | Phản hồi hệ thống |
 |---|---|---|---|
-| 1 | Microservice nghiệp vụ | Phát sinh sự kiện (Event) lên Message Broker (Spring ApplicationEvent: `notification.events`) kèm payload (Mã sự kiện: `ORDER_PAID_SUCCESS`, ID người nhận, Dữ liệu đơn hàng, Deduplication Key) | Message Broker tiếp nhận và lưu sự kiện vào phân vùng |
-| 2 | Notification Consumer | Đọc sự kiện từ topic, kiểm tra trùng lặp thông báo dựa trên `deduplication_key` trong Redis Cache (TTL = 24 giờ) | Nếu đã tồn tại key → Bỏ qua (chống spam trùng). Nếu chưa → Tiếp tục xử lý |
-| 3 | System | Tra cứu cấu hình người nhận (User Preferences): Kiểm tra quyền riêng tư, danh sách kênh đăng ký, ngôn ngữ ưa thích (vi/en) | Xác định danh sách kênh cần gửi: Email + In-App + Push Notification |
+| 1 | Service nghiệp vụ | Ghi domain event vào SQL Server transactional outbox trong cùng transaction với thay đổi nghiệp vụ | Outbox publisher gửi event qua RabbitMQ exchange tới durable queue sau publisher confirm; payload chỉ chứa dữ liệu tối thiểu cần thiết |
+| 2 | Notification Consumer | Đọc event từ RabbitMQ queue; tạo notification theo event, recipient và channel với deduplication key ổn định | Unique constraint trong SQL Server là nguồn bảo đảm duy nhất; Redis chỉ được dùng làm cache tùy chọn, không làm nguồn sự thật |
+| 3 | System | Đọc tùy chọn marketing/show reminder từ notification_preferences_json; áp dụng consent và trạng thái xác minh từng kênh | Thông báo in-app bắt buộc về giao dịch/bảo mật không bị tắt; các kênh gửi ngoài phải phù hợp preference và ma trận sự kiện |
 | 4 | System | Nạp mẫu thông điệp (Notification Template), biên dịch dữ liệu động (Tên khách, Mã vé, Tên concert, Số ghế, Tổng tiền, Mã QR vé đính kèm) | Tạo nội dung hoàn chỉnh cho từng kênh |
 | 5 | Dispatcher | Chuyển tiếp tác vụ gửi tới các Adapter kênh tương ứng (Email Worker, Push Worker, In-App DB Worker) | Thực hiện gọi API đối tác (AWS SES / Firebase Cloud Messaging) song song |
-| 6 | System | Ghi nhận trạng thái gửi vào cơ sở dữ liệu `notification_logs`: Trạng thái `SENT`, mã phản hồi đối tác, timestamp | Hoàn tất trong vòng $\le 2\text{ giây}$ kể từ lúc phát sinh sự kiện |
+| 6 | System | Ghi PENDING và attempt metadata; cập nhật SENT khi provider chấp nhận, DELIVERED khi có receipt, FAILED khi lỗi cuối cùng; retry giữ cùng deduplication key | Mục tiêu là commit/đưa tác vụ vào outbox trong ≤5 giây; không đặt SLA giao tới thiết bị cho provider bên ngoài |
 
 ---
 
@@ -55,14 +101,14 @@ Use case này đặc tả kiến trúc và quy trình xử lý của Hệ thốn
 | 1 | Hệ thống kích hoạt gửi cảnh báo thanh toán hoặc mã vé qua Push Notification tới điện thoại người dùng. |
 | 2 | Nhà mạng hoặc Google FCM trả về mã lỗi thiết bị không online hoặc Token không hợp lệ (`DEVICE_UNREGISTERED`). |
 | 3 | Hệ thống bắt sự kiện thất bại và tự động kích hoạt **Kênh Dự Phòng Cấp 1 (Fallback to Email)**. |
-| 4 | Trường hợp đây là tin khẩn cấp/OTP mà Email cũng bị trễ hoặc khách hàng chưa mở sau 3 phút, hệ thống kích hoạt **Kênh Dự Phòng Cấp 2 (SMS Brandname)** để đảm bảo khách nhận được thông tin. |
+| 4 | Chỉ gửi SMS dự phòng khi sự kiện được đánh dấu cần thiết, số điện thoại đã xác minh, consent/chính sách cho phép và ma trận sự kiện quy định kênh này; ghi trạng thái riêng, không khẳng định đã giao chỉ từ việc gửi request. |
 
 ### AF-02: Người Dùng Tùy Biến Cài Đặt Thông Báo (User Notification Preferences)
 | Bước | Mô tả |
 |---|---|
 | 1 | Khách hàng vào mục "Cài đặt thông báo" trên ứng dụng di động. |
 | 2 | Bật/Tắt các danh mục: Khuyến mãi vé mới, Nhắc nhở nghệ sĩ yêu thích, Bản tin tuần. |
-| 3 | Khách hàng **không thể tắt** nhóm thông báo "Giao dịch & An toàn tài khoản" (Bắt buộc theo BR-NOTI-001). |
+| 3 | Khách hàng không thể tắt thông báo in-app bắt buộc về giao dịch, bảo mật và thay đổi sự kiện ảnh hưởng trực tiếp đến vé; kênh ngoài áp dụng preference/consent theo BR-NOTI-001. |
 | 4 | Cấu hình mới có hiệu lực ngay lập tức cho các lần gửi thông báo tiếp theo. |
 
 ---
@@ -71,10 +117,10 @@ Use case này đặc tả kiến trúc và quy trình xử lý của Hệ thốn
 
 | ID | Điều kiện ngoại lệ | Cơ chế xử lý | Hành vi hệ thống |
 |---|---|---|---|
-| EX-01 | **Email bị dội (Hard Bounce / Mailbox Full)** | Nhà cung cấp Email (SES/SendGrid) trả về mã lỗi Bounce. Hệ thống ghi nhận trạng thái `BOUNCED` vào hồ sơ người dùng | Tạm khóa gửi email quảng cáo tới địa chỉ này; hiển thị cảnh báo đỏ trên trang cá nhân của khách hàng: *"Vui lòng cập nhật lại địa chỉ email hợp lệ"* |
+| EX-01 | Email bị dội (Hard Bounce / Mailbox Full) | Provider trả bounce không tạm thời | Ghi notifications.status=FAILED và provider_response đã lọc; đặt users.email_delivery_status=BOUNCED, dừng marketing email tới địa chỉ đó và yêu cầu người dùng cập nhật. Không báo email đã giao |
 | EX-02 | **Nhà mạng SMS từ chối do số thuê bao khóa 2 chiều hoặc chặn tin quảng cáo** | SMS Gateway trả về lỗi không thể chuyển phát | Lưu log lỗi `SMS_UNDELIVERED`; chuyển sang gửi qua Email và Notification In-App |
 | EX-03 | **Nghẽn hàng đợi thông báo trong giờ mở bán cao điểm (Queue Congestion)** | Lưu lượng tạo đơn hàng tăng vọt tạo ra hàng trăm nghìn thông báo cùng lúc | Hệ thống kích hoạt cơ chế phân tách hàng đợi (Priority Queue Sharding): Hàng đợi `Critical` (OTP, Mã vé, Báo hết hạn ghế) được ưu tiên xử lý trước; hàng đợi `Marketing` bị hoãn lại chạy sau giờ cao điểm |
-| EX-04 | **Gửi trùng lặp do mạng chập chờn (Duplicate Dispatch)** | Consumer nhận lại sự kiện trùng lặp từ Kafka do rebalance hoặc retry | Kiểm tra khóa Deduplication `noti:dedup:{event_id}:{user_id}` trong Redis. Nếu đã tồn tại thì hủy tác vụ và trả về kết quả thành công giả lập (Ack message) |
+| EX-04 | Gửi trùng do broker redelivery | Consumer nhận event lặp hoặc retry | SQL Server unique constraint trên deduplication key giữ đúng một notification logic; consumer ack bản lặp sau khi xác nhận bản ghi đã tồn tại. Redis chỉ là cache tăng tốc theo BR-NOTI-003 |
 
 ---
 
@@ -89,7 +135,7 @@ Use case này đặc tả kiến trúc và quy trình xử lý của Hệ thốn
 | **CONCERT_CANCEL** | Hủy hoặc thay đổi lịch biểu diễn khẩn cấp | 🔴 Critical | SMS, Email, Push | In-App Banner | ❌ Không |
 | **REFUND_SUCCESS** | Hoàn tiền đơn hàng thành công | 🟡 High | Email, In-App, Push | — | ❌ Không |
 | **SHOW_REMINDER** | Nhắc nhở trước giờ diễn ($T - 24$h, $T - 3$h) | 🟡 High | Push, Email, In-App | — | ✅ Có |
-| **MARKETING_SALE** | Thông báo mở bán concert mới / Mã giảm giá | 🟢 Normal | Push, In-App | Email | ✅ Có |
+| **MARKETING_SALE** | Thông báo concert mới mở bán | 🟢 Normal | Push, In-App | Email nếu đã opt-in | ✅ Có |
 
 ---
 
@@ -102,10 +148,10 @@ Use case này đặc tả kiến trúc và quy trình xử lý của Hệ thốn
 
 | Mã AC | Tiêu chí nghiệm thu (Acceptance Criteria) | Phân loại |
 |---|---|---|
-| AC-15-01-01 | Email xác nhận đặt vé và thông báo đẩy (Push Notification) phải được gửi đến thiết bị người dùng trong vòng không quá 5 giây kể từ khi cổng thanh toán ghi nhận thành công | Performance |
+| AC-15-01-01 | Trong vòng 5 giây kể từ khi payment được xác nhận nội bộ, notification được ghi PENDING/outbox và có thể quan sát qua trạng thái hệ thống; thời gian provider giao tới thiết bị không được coi là SLA của nền tảng | Performance |
 | AC-15-01-02 | Nội dung email hiển thị đầy đủ: Mã đơn hàng, Tên sự kiện, Thời gian biểu diễn, Địa điểm, Sơ đồ khu vực, Hạng vé, Số ghế, Tổng tiền và hướng dẫn vào cổng | Functional |
 | AC-15-01-03 | Email có tệp đính kèm tóm tắt đơn hàng định dạng PDF chuẩn A4 có thể in trực tiếp | Usability |
-| AC-15-01-04 | Đảm bảo tính duy nhất: Mỗi đơn hàng thành công chỉ gửi duy nhất một thông báo xác nhận, không bao giờ gửi trùng lặp email do retry mạng | Reliability |
+| AC-15-01-04 | Mỗi event, recipient, channel và purpose chỉ có một notification logic; broker redelivery/retry giữ cùng deduplication key; callback provider lặp không tạo trạng thái giao dịch trùng. | Reliability |
 
 ---
 

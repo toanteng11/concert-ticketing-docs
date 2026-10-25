@@ -1,4 +1,4 @@
-﻿# BF03 — Business Flow: Luồng Thanh Toán VNPay & MoMo (Payment Flow)
+# BF03 — Business Flow: Luồng Thanh Toán VNPay & MoMo (Payment Flow)
 
 ## 1. Mục Đích
 
@@ -40,7 +40,7 @@ sequenceDiagram
 
     PAY_API->>DB: INSERT payment_transactions\n{status:"INITIATED", gateway:"VNPAY", amount:X}
 
-    PAY_API->>PAY_API: Tạo VNPay Payment URL:\nvnp_Amount = order.total_amount * 100\nvnp_TxnRef = payment_transaction_id\nvnp_OrderInfo = "Thanh toan ve concert"\nvnp_ReturnUrl = "{system}/payments/vnpay/return"\nvnp_IpAddr = user_ip\nvnp_CreateDate = NOW()\nvnp_SecureHash = HMACSHA512(secret_key, query_params)
+    PAY_API->>PAY_API: Tạo VNPay Payment URL:\nvnp_Amount = order.final_amount * 100\nvnp_TxnRef = payment_transaction_id\nvnp_OrderInfo = "Thanh toan ve concert"\nvnp_ReturnUrl = "{system}/payments/vnpay/return"\nvnp_IpAddr = user_ip\nvnp_CreateDate = NOW()\nvnp_SecureHash = HMACSHA512(secret_key, query_params)
 
     PAY_API-->>APP: {payment_url: "https://sandbox.vnpayment.vn/paymentv2/...", expires_in: 600}
 
@@ -77,7 +77,7 @@ sequenceDiagram
     C->>APP: Chọn "Thanh toán qua MoMo"
     APP->>PAY_API: POST /payments/initiate\nBody: {order_id, gateway:"MOMO"}
 
-    PAY_API->>MOMO: POST https://payment.momo.vn/v2/gateway/api/create\n{\n  partnerCode: "PARTNER_CODE",\n  requestId: payment_txn_id,\n  amount: order.total_amount,\n  orderId: order_id,\n  orderInfo: "Mua ve concert",\n  redirectUrl: "{system}/payments/momo/return",\n  ipnUrl: "{system}/webhooks/momo/ipn",\n  requestType: "payWithMethod",\n  signature: HMAC_SHA256\n}
+    PAY_API->>MOMO: POST https://payment.momo.vn/v2/gateway/api/create\n{\n  partnerCode: "PARTNER_CODE",\n  requestId: payment_txn_id,\n  amount: order.final_amount,\n  orderId: order_id,\n  orderInfo: "Mua ve concert",\n  redirectUrl: "{system}/payments/momo/return",\n  ipnUrl: "{system}/webhooks/momo/ipn",\n  requestType: "payWithMethod",\n  signature: HMAC_SHA256\n}
 
     MOMO-->>PAY_API: {payUrl: "https://payment.momo.vn/...", deeplink: "momo://...", qrCodeUrl}
 
@@ -118,10 +118,10 @@ flowchart TD
     IDEM_OK -->|Chưa| STATUS["5. Kiểm tra status_code:\nVNPay: vnp_ResponseCode = '00'\nMoMo: resultCode = 0"]
 
     STATUS --> STATUS_OK{Thanh toán thành công?}
-    STATUS_OK -->|Không| FAILED_TXN["UPDATE payment_transaction\nstatus = FAILED\norder vẫn PENDING đến khi OUT_TIME"]
+    STATUS_OK -->|Provider xác nhận thất bại| FAILED_TXN["UPDATE payment_transaction\nstatus = FAILED\norder vẫn PENDING đến khi OUT_TIME"]\n    STATUS_OK -->|Không có response / không rõ kết quả| UNKNOWN_TXN["status = UNKNOWN\nđối soát provider trước khi retry"]
 
-    STATUS_OK -->|Có| AMOUNT["6. Khớp số tiền:\nSELECT total_amount FROM orders\nWHERE id = order_id"]
-    AMOUNT --> AMT_OK{amount_paid\n= order.total_amount?}
+    STATUS_OK -->|Có| AMOUNT["6. Khớp số tiền:\nSELECT final_amount FROM orders\nWHERE id = order_id"]
+    AMOUNT --> AMT_OK{amount_paid\n= order.final_amount?}
     AMT_OK -->|Không khớp| FRAUD2["Ghi SUSPICIOUS_PAYMENT_FRAUD\nAlert tức thì\nKHÔNG cập nhật order"]
 
     AMT_OK -->|Khớp| ORDER_CHECK["7. Kiểm tra trạng thái đơn hàng:\nSELECT status, expires_at\nFROM orders WHERE id = order_id"]
@@ -130,10 +130,10 @@ flowchart TD
     ORDER_STATUS -->|PENDING và chưa hết hạn| SUCCESS_FLOW["8. Atomic Transaction:\n- payment_transaction.status = SUCCESS\n- order.status = PAID\n- seats → SOLD\n- Tạo tickets (ORDERED)\n- Publish OrderPaidEvent"]
     SUCCESS_FLOW --> NOTIFY["Trả 200 OK\nNotification Service\ngửi email + push notification"]
 
-    ORDER_STATUS -->|OUT_TIME hoặc CANCELLED| LATE["9. Late Payment:\nKiểm tra ghế còn trống không?"]
-    LATE --> SEAT_OK{Ghế vẫn còn AVAILABLE?}
-    SEAT_OK -->|Có| RECOVER["Phục hồi đơn hàng:\norder.status = PAID\nPhát hành vé\n(Hiếm gặp)"]
-    SEAT_OK -->|Không - Đã mất| UNFULFILLED["payment_transaction.status = SUCCESS_UNFULFILLED\nKích hoạt hoàn tiền 100% ngay lập tức\nGửi email xin lỗi + mã hoàn tiền"]
+    ORDER_STATUS -->|OUT_TIME hoặc CANCELLED| LATE["9. Late Payment:\nKhông hồi sinh hold; không tạo order mới"]
+    LATE --> LATE_PAY["Ghi SUCCESS_UNFULFILLED\nkhông claim ghế"]
+
+    LATE_PAY --> REFUND["Sau provider reconciliation xác nhận capture:\nlogical refund 100% số tiền thực thu\nidempotency theo D-016/D-032"]
 ```
 
 ---

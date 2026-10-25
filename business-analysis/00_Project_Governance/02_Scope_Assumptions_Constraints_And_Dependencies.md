@@ -1,4 +1,4 @@
-﻿# Phạm Vi, Giả Định, Ràng Buộc và Phụ Thuộc
+# Phạm Vi, Giả Định, Ràng Buộc và Phụ Thuộc
 
 ## Mục đích
 
@@ -24,8 +24,9 @@ Các chức năng và luồng nghiệp vụ sau đây **nằm trong phạm vi** 
 | 10 | Quản lý Tài khoản (Admin) | Xem danh sách tài khoản, khóa/mở khóa, thay đổi phân quyền |
 | 11 | Thông báo | Thông báo trong ứng dụng và email cho các sự kiện: thanh toán, hoàn tiền, hủy concert, hết vé, kết quả check-in |
 | 12 | Đánh giá Concert | Khách hàng đánh giá concert sau khi concert đã hoàn thành (trạng thái COMPLETED) |
-| 13 | Báo cáo | Báo cáo doanh thu và số vé bán theo concert, theo thời gian cho ban tổ chức và admin |
+| 13 | Báo cáo | Báo cáo doanh thu/vé bán theo concert và thời gian; exports đồng bộ/bất đồng bộ theo phân quyền. Không gồm lịch gửi báo cáo định kỳ tự động trong baseline. |
 | 14 | Đa nền tảng | Web (SPA), iOS và Android đều dùng chung REST API backend |
+| 15 | Báo cáo và quyết toán Organizer | Lập sổ settlement, yêu cầu và phê duyệt sau concert theo hợp đồng; Finance ghi nhận transfer reference/bằng chứng. Không bao gồm chuyển khoản tự động hay xác nhận custody/escrow (D-034) |
 
 ---
 
@@ -34,11 +35,14 @@ Các chức năng và luồng nghiệp vụ sau đây **nằm trong phạm vi** 
 Các mục sau đây **không thuộc phạm vi** dự án trừ khi có quyết định mở rộng được ghi nhận trong Decision Log:
 
 - Xây dựng hoặc quản lý hạ tầng vật lý của địa điểm tổ chức.
+- Tích hợp tự động chuyển khoản payout Organizer hoặc vận hành tài khoản escrow/custody; baseline chỉ lưu sổ quyết toán, phê duyệt và bằng chứng chuyển tiền. Mở rộng cần chọn provider, hợp đồng và quyết định mới (D-034).
+- Cấu hình lịch gửi báo cáo định kỳ qua email: chưa nằm trong baseline; không có report_schedules table hoặc tiêu chí nghiệm thu trong release hiện tại.
 - Cài đặt nội bộ của nhà cung cấp thanh toán (VNPay, MoMo).
 - Chuyển nhượng hoặc bán lại vé giữa các tài khoản khách hàng.
-- Chương trình khách hàng thân thiết, tích điểm, mã giảm giá hoặc ưu đãi theo nhóm.
+- Chương trình khách hàng thân thiết, tích điểm và ưu đãi theo nhóm.
+- Voucher/mã giảm giá, chiến dịch ưu đãi và báo cáo voucher: ngoài baseline theo D-031; không triển khai API, bảng dữ liệu hoặc tiêu chí nghiệm thu voucher trong release này.
 - Thiết kế chi tiết script triển khai hạ tầng và source code.
-- Hỗ trợ quét QR offline (không có mạng) tại cổng vào.
+- Quét QR offline tại cổng: ngoài baseline theo D-023. Khi không thể xác thực online, scanner fail-closed, dừng xác nhận tự động và báo Gate Supervisor; không chấp nhận vé chỉ từ cache cục bộ.
 - Chiến dịch marketing và hệ thống CRM.
 
 ---
@@ -52,12 +56,12 @@ Các giả định dưới đây được coi là **đúng** trong suốt quá t
 | A-01 | Mỗi tài khoản người dùng có tối đa **một** vị trí hàng chờ cho mỗi concert, bất kể mở bao nhiêu tab hoặc thiết bị. |
 | A-02 | Một khách hàng có thể giữ tối đa **4 ghế** cho một lần đặt vé. |
 | A-03 | Lệnh giữ ghế hết hạn sau **10 phút** nếu thanh toán không hoàn thành trong khoảng thời gian hợp lệ. |
-| A-04 | Vị trí hàng chờ bị mất nếu khách hàng không hoạt động (inactive) quá **2 phút** trong phòng chờ. |
+| A-04 | Lượt vào khu vực chọn ghế hết hạn sau **2 phút** không hoạt động; đây là timeout hàng chờ/phiên, độc lập với seat hold 10 phút theo D-002. Ghế đang giữ không tự hết hạn sớm hơn TTL đã chốt. |
 | A-05 | Vé QR là **đơn dụng** (single-use) và chỉ có thể check-in một lần duy nhất. |
-| A-06 | Chính sách hoàn tiền được áp dụng cố định: **100%** nếu còn ≥ 7 ngày trước concert; **50%** nếu còn 3–6 ngày; **0%** nếu còn < 3 ngày. |
+| A-06 | Theo D-005/D-024: ngày lịch tại timezone địa điểm; ≥7 ngày: 100%, 3–6 ngày: 50%, 0–2 ngày: 0%. 50% làm tròn half-up đến 1 VND trên tổng giá vé đủ điều kiện. |
 | A-07 | Ghế có trạng thái SOLD chỉ quay về AVAILABLE khi đơn được hoàn tiền trong khi concert còn trong giai đoạn mở bán. |
 | A-08 | Khu vực chọn ghế hỗ trợ tối đa **5.000 người dùng đồng thời**. |
-| A-09 | Lưu lượng cao điểm khi mở bán vé có thể đạt đến **100.000 concurrent users (CCU)**. |
+| A-09 | Baseline phải hỗ trợ **100.000 CCU**; 500.000 CCU là mục tiêu tương lai ngoài release theo D-022. |
 | A-10 | Giờ mở bán phải cách thời điểm concert được duyệt **ít nhất 1 ngày**. |
 | A-11 | Admin phải xử lý yêu cầu duyệt concert **trong vòng 48 giờ**. |
 
@@ -85,6 +89,8 @@ Các ràng buộc cứng mà hệ thống **phải tuân thủ**:
 
 | Phụ thuộc | Mô tả | Rủi ro nếu không có |
 |---|---|---|
+| Hợp đồng Organizer/Platform + Legal/Finance | Chốt tỷ lệ/căn cứ phí, chi phí refund, điều kiện/timing payout, custody và phương thức chuyển theo D-034 | Không mở payout production; điều khoản chưa được xác nhận |
+
 | VNPay API | Xử lý thanh toán và hoàn tiền qua VNPay | Không thể hoàn tất thanh toán qua VNPay |
 | MoMo API | Xử lý thanh toán và hoàn tiền qua MoMo | Không thể hoàn tất thanh toán qua MoMo |
 | Email / Push provider | Gửi thông báo email và push notification | Mất kênh thông báo, khách không nhận được cập nhật quan trọng |
@@ -92,22 +98,15 @@ Các ràng buộc cứng mà hệ thống **phải tuân thủ**:
 | Organizer cung cấp dữ liệu | Thông tin địa điểm, sơ đồ ghế, giá vé đúng định dạng | Không thể tạo concert hợp lệ |
 | Thiết bị quét QR tại cổng | Kết nối mạng và thiết bị phần cứng tại địa điểm | Không thể thực hiện check-in |
 | Redis | Caching, session phòng chờ, giữ ghế (SET NX EX), rate limiting | Chậm hơn nhưng fallback sang DB-level lock |
-| Kafka / RabbitMQ | Message queue cho notification và xử lý bất đồng bộ | Thông báo bị trễ hoặc mất; tải đồng bộ tăng |
+| RabbitMQ | Durable queue cho notification và xử lý bất đồng bộ; publisher confirms, retry/DLQ, idempotent consumer | Notification chậm hoặc lỗi chuyển vào retry/DLQ; giao dịch nghiệp vụ vẫn được lưu bền vững |
 | CDN (Cloudflare R2, AWS CloudFront) | Phân phối ảnh poster, banner, file vé | Tải chậm hơn cho người dùng xa server |
-| MySQL 8.0 | Lưu trữ chính: đơn hàng, vé, concert (ACID) | Mất dữ liệu giao dịch |
+| SQL Server | Lưu trữ chính: đơn hàng, vé, concert (ACID) | Mất dữ liệu giao dịch |
 
 ---
 
-## 6. Các Điểm Cần Xác Nhận Thêm
+## 6. Câu Hỏi Mở
 
-| # | Vấn đề | Trạng thái |
-|---|---|---|
-| 1 | Định nghĩa chính xác của "hoạt động" trong phòng chờ để tính thời gian 2 phút timeout | Chưa xác định |
-| 2 | Xử lý khi payment callback thành công đến sau khi ghế đã hết hạn giữ | Chưa xác định |
-| 3 | Chính sách hoàn tiền khi admin hủy concert có áp dụng cho vé đã check-in không? | Chưa xác định |
-| 4 | Khách hàng có thể tạo nhiều đơn hàng cho cùng một concert không? | Chưa xác định |
-| 5 | Cách làm tròn số tiền hoàn trả và xử lý khi hoàn tiền một phần thất bại | Chưa xác định |
-| 6 | Hệ thống có yêu cầu quét QR offline (không cần mạng) tại cổng vào không? | Chưa xác định |
+Các quyết định baseline và cổng go-live có thẩm quyền nằm trong [Decision Log](./03_Risks_Open_Questions_And_Decision_Log.md). Mọi thay đổi sau này phải cập nhật decision log và các artifact bị ảnh hưởng.
 
 ---
 
@@ -116,6 +115,6 @@ Các ràng buộc cứng mà hệ thống **phải tuân thủ**:
 - [`00_Project_Governance/01_Stakeholders_And_Business_Objectives.md`](./01_Stakeholders_And_Business_Objectives.md)
 - [`00_Project_Governance/03_Risks_Open_Questions_And_Decision_Log.md`](./03_Risks_Open_Questions_And_Decision_Log.md)
 - [`01_Business_Overview/02_Actor_Permissions.md`](../01_Business_Overview/02_Actor_Permissions.md)
-- [`01_Business_Overview/03_Business_Rules_Catalog_(Business_Rules).md`](../01_Business_Overview/03_Business_Rules_Catalog_(Business_Rules).md)
+- [`01_Business_Overview/03_Business_Rules_Catalog_(Business_Rules).md`](<../01_Business_Overview/03_Business_Rules_Catalog_(Business_Rules).md>)
 
 

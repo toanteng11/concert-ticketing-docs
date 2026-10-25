@@ -1,4 +1,4 @@
-﻿# 04 — Đồng Thời & Kịch Bản Sự Cố Theo Định Lý CAP (Concurrency & CAP Theorem)
+# 04 — Đồng Thời & Kịch Bản Sự Cố Theo Định Lý CAP (Concurrency & CAP Theorem)
 
 ## 1. Giới Thiệu & Ứng Dụng Định Lý CAP Trong Hệ Thống Bán Vé
 
@@ -14,7 +14,27 @@
 | **Xử Lý Thanh Toán (Payment Processing)** | **CP** (Consistency + Partition Tolerance) | **Nhất quán Giao dịch (ACID Transactions)** | Tiền bạc và dòng tiền bắt buộc phải chính xác 100%, không chấp nhận chênh lệch số dư. |
 | **Tìm Kiếm & Xem Concert (Catalog & Search)** | **AP** (Availability + Partition Tolerance) | **Nhất quán Cuối cùng (Eventual Consistency)** | Chấp nhận người dùng xem thông tin mô tả concert hoặc số lượng vé còn lại chậm hơn thực tế vài giây, đổi lại trang web luôn mở được 100%. |
 | **Đánh Giá & Nhận Xét (Reviews & Ratings)** | **AP** (Availability + Partition Tolerance) | **Nhất quán Cuối cùng (Eventual Consistency)** | Bình luận và điểm sao của khán giả có thể cập nhật sau 1–2 phút qua Message Broker. |
-| **Hệ Thống Thông Báo (Notifications)** | **AP** (Availability + Partition Tolerance) | **Nhất quán Cuối cùng (Eventual Consistency)** | Thông báo đẩy và email được xếp hàng trong spring-async, có thể trễ vài giây trong giờ cao điểm. |
+| **Hệ Thống Thông Báo (Notifications)** | **AP** (Availability + Partition Tolerance) | **Nhất quán Cuối cùng (Eventual Consistency)** | Thông báo đẩy và email được xếp hàng trong message broker, có thể trễ vài giây trong giờ cao điểm. |
+
+<!-- BEGIN MERMAID DIAGRAM NFR-CAP-DOMAINS -->
+### Consistency policy by business domain
+
+```mermaid
+flowchart LR
+  partition["Network partition"]
+  partition --> seat["Seat hold / booking<br/>CP, strong consistency"]
+  partition --> payment["Payment<br/>CP, ACID transaction"]
+  partition --> catalog["Catalog / search<br/>AP, eventual consistency"]
+  partition --> reviews["Reviews / ratings<br/>AP, eventual consistency"]
+  partition --> notifications["Notifications<br/>AP, eventual consistency"]
+  seat --> reject["Reject unsafe write if consistency cannot be established"]
+  payment --> retry["Do not report success before durable commit"]
+  catalog --> stale["May serve briefly stale public data"]
+  reviews --> lag["Allow delayed rating propagation"]
+  notifications --> backlog["Queue and deliver asynchronously"]
+```
+<!-- END MERMAID DIAGRAM NFR-CAP-DOMAINS -->
+
 
 ---
 
@@ -25,8 +45,8 @@
 - **Nguy cơ:** Mất khóa ghế đang giữ, dẫn đến việc người khác có thể chọn đè vào ghế vừa được giữ.
 - **Giải pháp xử lý:**
   1. **Tự động chuyển vùng (Redis Cluster Failover):** Các node Redis Replica phát hiện Master không phản hồi Heartbeat sau 3 giây, tiến hành bầu chọn (Election) và nâng một Replica lên làm Master mới.
-  2. **Bảo vệ bằng Database Source of Truth:** Mọi yêu cầu xác nhận đơn hàng bắt buộc phải kiểm tra lại trạng thái trong cơ sở dữ liệu MySQL 8.0 (`SELECT status FROM seats WHERE id = ? FOR UPDATE`). Nếu Redis bị mất dữ liệu khóa, MySQL 8.0 đóng vai trò chốt chặn cuối cùng ngăn chặn bán trùng.
-  3. **Tái lập bộ đệm (Cache Re-hydration Worker):** Ngay sau khi Master mới online, một tiến trình nền quét các bản ghi `seat_holds` đang `ACTIVE` trong MySQL 8.0 và đồng bộ ngược lại vào Redis.
+  2. **Bảo vệ bằng Database Source of Truth:** Mọi yêu cầu xác nhận đơn hàng bắt buộc phải kiểm tra lại trạng thái trong cơ sở dữ liệu SQL Server (`SELECT status FROM dbo.seats WITH (UPDLOCK, ROWLOCK) WHERE id = ? trong transaction`). Nếu Redis bị mất dữ liệu khóa, SQL Server đóng vai trò chốt chặn cuối cùng ngăn chặn bán trùng.
+  3. **Tái lập bộ đệm (Cache Re-hydration Worker):** Ngay sau khi Master mới online, một tiến trình nền quét các bản ghi `seat_holds` đang `ACTIVE` trong SQL Server và đồng bộ ngược lại vào Redis.
 
 ---
 
@@ -41,18 +61,16 @@
 
 ---
 
-### Kịch Bản 3: Sự Cố Cơ Sở Dữ Liệu MySQL 8.0 Master Sập
-- **Hiện tượng:** Máy chủ MySQL 8.0 Primary bị lỗi phần cứng ổ cứng NVMe hoặc Kernel Panic.
-- **Nguy cơ:** Toàn bộ thao tác ghi đơn hàng và phát hành vé bị dừng lại.
+### Kịch Bản 3: Sự Cố Cơ Sở Dữ Liệu SQL Server Primary Sập
+- **Hiện tượng:** SQL Server Primary bị lỗi phần cứng hoặc mất kết nối.
+- **Nguy cơ:** Tạm dừng thao tác ghi đơn hàng và phát hành vé cho tới khi dịch vụ khôi phục.
 - **Giải pháp xử lý:**
-  1. **Cơ chế Patroni HA Failover:**
-     - Công cụ điều phối phân tán (DCS - Distributed Consensus Store dựa trên etcd) phát hiện mất tín hiệu từ Primary.
-     - Sau đúng $10\text{ giây}$ (Heartbeat Timeout), Patroni phong cấp (Promote) cho Read Replica có vị trí ghi nhật ký WAL mới nhất (nhỏ nhất về Replication Lag) trở thành Primary mới.
-     - HikariCP / ProxySQL tự động chuyển tiếp toàn bộ luồng kết nối ghi sang node Primary mới mà không cần khởi động lại ứng dụng Modular Monolith.
-  2. **Trải nghiệm người dùng:** Trong 10–15 giây chuyển giao, API Gateway trả về thông báo duyên dáng: *"Hệ thống đang đồng bộ dữ liệu giao dịch, đơn hàng của bạn đang được xử lý, vui lòng không tắt màn hình"*.
+  1. Cơ chế HA/failover, quorum, đồng bộ dữ liệu và endpoint kết nối theo SQL Server 2025 Enterprise Always On AG baseline D-026; DBA/Finance xác nhận license và sizing trước go-live.
+  2. Ứng dụng reconnect qua endpoint/listener đã chọn; HikariCP cấp lại connection nhưng không tự quyết định failover hoặc read/write routing.
+  3. Thời gian chuyển đổi và khả năng bảo toàn commit phải được xác nhận bằng fault-injection test; không coi timeout hay RPO/RTO cố định là cam kết trước benchmark D-030.
+- **Trải nghiệm người dùng:** Trong thời gian chuyển đổi, API trả trạng thái có thể retry; không báo đơn thành công trước khi SQL Server xác nhận commit.
 
 ---
-
 ### Kịch Bản 4: Cổng Thanh Toán Đối Tác (VNPay / MoMo) Bị Gián Đoạn Hoặc Nghẽn Mạng
 - **Hiện tượng:** Cổng thanh toán bên ngoài phản hồi rất chậm ($> 10\text{ giây}$) hoặc trả về lỗi `502 Bad Gateway` liên tục.
 - **Nguy cơ:** Hàng nghìn kết nối bị treo chờ phản hồi, làm cạn kiệt tài nguyên Thread Pool của hệ thống.
@@ -64,10 +82,35 @@
 
 ---
 
-### Kịch Bản 5: Hàng Đợi spring-async Bị Nghẽn Tiêu Thụ (Consumer Lag Accumulation)
+### Kịch Bản 5: Hàng Đợi message broker Bị Nghẽn Tiêu Thụ (Consumer Lag Accumulation)
 - **Hiện tượng:** Số lượng thông báo hoặc tác vụ gửi vé tăng đột biến vượt quá tốc độ tiêu thụ của các worker tiêu thụ (Consumer Lag $> 50.000$ messages).
 - **Nguy cơ:** Trễ thông báo vé điện tử, khách hàng hoang mang vì đã trừ tiền mà chưa nhận được email xác nhận.
 - **Giải pháp xử lý:**
-  1. **Tự động mở rộng Consumer (KEDA Autoscaling):** Hệ thống giám sát chỉ số `spring-async_consumer_lag`, tự động tăng số lượng Pod Consumer từ 2 lên tối đa 14 pods để tiêu thụ song song các phân vùng (Partitions).
-  2. **Hàng đợi Thư Chết (Dead Letter Queue - DLQ):** Các thông điệp bị lỗi xử lý quá 3 lần (như email sai định dạng) được đẩy ngay vào topic `notification.dlq` để không làm chặn đầu các thông điệp hợp lệ phía sau.
+  1. **Tự động mở rộng Consumer (KEDA):** theo dõi RabbitMQ queue depth, unacked messages và tuổi message lâu nhất; scale trong giới hạn được benchmark production-like D-030 xác nhận.
+  2. **Dead Letter Queue (DLQ):** Message lỗi xử lý quá số lần retry giới hạn được chuyển vào RabbitMQ dead-letter queue để điều tra, không chặn các message hợp lệ phía sau.
 
+<!-- BEGIN MERMAID DIAGRAM NFR-FAILURES -->
+### Các nhánh xử lý sự cố phân tán
+
+```mermaid
+flowchart TD
+  incident["Failure detected"]
+  redis["Redis Master unavailable"]
+  redisAction["Failover; verify against SQL Server; rehydrate ACTIVE holds"]
+  partition["Cross-AZ partition"]
+  quorum["Only quorum partition may accept writes;<br/>minority becomes read-only or rejects"]
+  sql["SQL Server Primary unavailable"]
+  sqlAction["Pause transactional success; reconnect through selected endpoint;<br/>measure recovery under D-026 / D-030"]
+  pay["Payment gateway timeout / errors"]
+  breaker["Circuit breaker OPEN; offer alternate gateway;<br/>probe in HALF-OPEN after 60s"]
+  broker["Broker consumer lag above threshold"]
+  brokerAction["At lag above 50,000, scale consumers 2 to max 14;<br/>route messages failing 3 attempts to DLQ"]
+  incident --> redis --> redisAction
+  incident --> partition --> quorum
+  incident --> sql --> sqlAction
+  incident --> pay --> breaker
+  incident --> broker --> brokerAction
+  note["Do not assume a fixed SQL Server failover duration or RPO/RTO before D-026 topology and D-030 tests are confirmed."]
+  sqlAction -.-> note
+```
+<!-- END MERMAID DIAGRAM NFR-FAILURES -->

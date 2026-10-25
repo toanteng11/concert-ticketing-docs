@@ -1,4 +1,4 @@
-﻿# BF05 — Business Flow: Phê Duyệt & Hủy Concert (Concert Approval & Cancellation Flow)
+# BF05 — Business Flow: Phê Duyệt & Hủy Concert (Concert Approval & Cancellation Flow)
 
 ## 1. Mục Đích
 
@@ -26,7 +26,7 @@ sequenceDiagram
 
     CON_API->>CON_API: Validate:\n- Sơ đồ ghế đã có ≥ 1 zone với giá\n- sale_start_time > current_time\n- event_date > sale_start_time\n- Thông tin pháp lý Organizer đã xác minh
 
-    CON_API->>DB: UPDATE concerts\nSET status = 'PENDING_REVIEW',\nsubmitted_at = NOW()
+    CON_API->>DB: UPDATE concerts\nSET status = 'PENDING_REVIEW',\nsubmitted_at = SYSUTCDATETIME()
 
     CON_API->>NT: Gửi thông báo tới Admin
     NT-->>ADMIN: Email + Dashboard Alert:\n"Concert mới cần phê duyệt:\n[Tên Concert] — [Ngày] — [Địa điểm]\nSLA: 48 giờ"
@@ -38,7 +38,7 @@ sequenceDiagram
 
     alt Admin Phê Duyệt
         ADMIN->>CON_API: PUT /admin/concerts/{id}/approve\nBody: {notes: "Đã kiểm tra GPKD và hợp đồng"}
-        CON_API->>DB: UPDATE concerts SET status = 'PUBLISHED',\napproved_at = NOW(), approved_by = admin_id
+        CON_API->>DB: UPDATE concerts SET status = 'PUBLISHED',\napproved_at = SYSUTCDATETIME(), approved_by = admin_id
         CON_API->>NT: Notify Organizer
         NT-->>ORG: Email + Push: "🎉 Concert đã được phê duyệt!\nHiện đang hiển thị công khai. Mở bán lúc [sale_start_time]"
 
@@ -70,22 +70,22 @@ sequenceDiagram
     Note over SCHED: Chạy mỗi phút kiểm tra concerts sắp mở bán
 
     SCHED->>CON_API: CheckSaleStartTime()
-    CON_API->>DB: SELECT id FROM concerts\nWHERE status = 'PUBLISHED'\nAND sale_start_time - INTERVAL '15 minutes' <= NOW()\nAND sale_start_time > NOW()
+    CON_API->>DB: SELECT id FROM concerts\nWHERE status = 'PUBLISHED'\nAND sale_start_time <= DATEADD(MINUTE, 15, SYSUTCDATETIME())\nAND sale_start_time > SYSUTCDATETIME()
 
     alt Có concert sắp mở bán trong 15 phút
         DB-->>CON_API: [concert_id_list]
         CON_API->>WR_SVC: ActivateWaitingRoom(concert_id)
         WR_SVC->>CDN: Kích hoạt Waiting Room rule tại Edge
-        CON_API->>DB: UPDATE concerts SET waiting_room_active = true
+        CON_API->>DB: UPDATE concerts SET waiting_room_active = 1
     end
 
-    CON_API->>DB: SELECT id FROM concerts\nWHERE status = 'PUBLISHED'\nAND sale_start_time <= NOW()
+    CON_API->>DB: SELECT id FROM concerts\nWHERE status = 'PUBLISHED'\nAND sale_start_time <= SYSUTCDATETIME()
 
     alt Có concert đến giờ mở bán
         DB-->>CON_API: [concert_id_list]
         loop Với mỗi concert
             CON_API->>CON_API: Validate:\n- venue_map.all_zones_priced = true\n- contract_confirmed = true
-            CON_API->>DB: UPDATE concerts\nSET status = 'ON_SALE', sale_opened_at = NOW()
+            CON_API->>DB: UPDATE concerts\nSET status = 'ON_SALE', sale_opened_at = SYSUTCDATETIME()
             CON_API->>WR_SVC: TriggerQueueShuffle(concert_id)
         end
     end
@@ -97,19 +97,14 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    A["Organizer gửi yêu cầu hủy concert\n(POST /organizer/concerts/{id}/cancel-request)"] --> B{"Thời gian còn lại\nđến ngày biểu diễn?"}
-
-    B -->|"< 72 giờ"| REJECT["❌ HỆ THỐNG TỪ CHỐI:\nKhông thể hủy trong vòng 72h\ntrước giờ diễn\n(BR-CON-006)\n\nThông báo: Liên hệ Admin để\nxử lý trường hợp đặc biệt"]
-
-    B -->|"≥ 72 giờ"| CONFIRM["Hiển thị màn xác nhận:\n- Số đơn PAID bị ảnh hưởng: N đơn\n- Tổng tiền phải hoàn: X VNĐ\n- Chi phí hoàn tiền do Organizer chịu\n(BR-CON-006)\n\nOrganizer phải đánh tick xác nhận"]
-
-    CONFIRM --> ORG_CONFIRM{"Organizer\nxác nhận?"}
-    ORG_CONFIRM -->|Hủy bỏ| CANCEL_FLOW["Giữ nguyên concert\nKhông thay đổi gì"]
-    ORG_CONFIRM -->|Xác nhận| SEND_TO_ADMIN["Gửi Yêu cầu hủy lên Admin\nconcert.status = PENDING_CANCELLATION\nAdmin có 2h để xác nhận hoặc từ chối"]
-
-    SEND_TO_ADMIN --> ADMIN_DECISION{"Admin quyết định"}
-    ADMIN_DECISION -->|Xác nhận hủy| EXECUTE_CANCEL["Kích hoạt concert.status = CANCELLED\n→ Kích hoạt hoàn tiền 100% tự động\n(Quy trình BF04)"]
-    ADMIN_DECISION -->|Từ chối| KEEP["Concert tiếp tục diễn\nThông báo cho Organizer\nlý do không được hủy"]
+    A["Organizer gửi yêu cầu hủy concert<br/>POST /organizer/concerts/{id}/cancel-request"] --> REVIEW["Hiển thị số order PAID và khoản refund dự kiến<br/>Chi phí/điều kiện lấy theo hợp đồng có hiệu lực"]
+    REVIEW --> ORG_CONFIRM{"Organizer xác nhận gửi yêu cầu?"}
+    ORG_CONFIRM -->|Không| CANCEL_FLOW["Giữ nguyên concert; không đổi dữ liệu"]
+    ORG_CONFIRM -->|Có| SEND_TO_ADMIN["Ghi cancellation_requested_at và status_before_cancellation<br/>concert.status = PENDING_CANCELLATION"]
+    SEND_TO_ADMIN --> ADMIN_DECISION{"Admin quyết định theo hợp đồng/chính sách đã duyệt"}
+    ADMIN_DECISION -->|Duyệt| EXECUTE_CANCEL["concert.status = CANCELLED<br/>Hoàn 100% order.final_amount cho mọi order PAID<br/>theo D-017 và BF04"]
+    ADMIN_DECISION -->|Từ chối| KEEP["Khôi phục status_before_cancellation<br/>Ghi audit và thông báo Organizer"]
+    EXECUTE_CANCEL --> FINAL["Vô hiệu hóa mọi ticket; giữ check-in log<br/>không mở lại ghế; reconcile refund UNKNOWN"]
 ```
 
 ---
@@ -135,7 +130,7 @@ sequenceDiagram
 
     CON_API->>CON_API: Xác thực Admin 2FA token\nGhi Audit Log đầy đủ
 
-    CON_API->>CON_API: UPDATE concerts\nSET status='CANCELLED',\ncancelled_by=admin_id,\ncancel_reason=reason,\ncancelled_at=NOW()
+    CON_API->>CON_API: UPDATE concerts\nSET status='CANCELLED',\ncancelled_by=admin_id,\ncancel_reason=reason,\ncancelled_at=SYSUTCDATETIME()
 
     CON_API->>EVENT_BUS: Publish ConcertCancelledEvent (Priority HIGH)
 
@@ -144,7 +139,7 @@ sequenceDiagram
         EVENT_BUS->>NT: Gửi thông báo khẩn đến tất cả khách hàng bị ảnh hưởng
     end
 
-    ORDER_SVC->>ORDER_SVC: Batch update:\n- N orders → CANCELLED + REFUND_PENDING\n- Tickets → CANCELLED (QR vô hiệu)\n- Seats → AVAILABLE
+    ORDER_SVC->>ORDER_SVC: Batch update:\n- N eligible orders → REFUND_PENDING (không có trạng thái CANCELLED trung gian); mọi order PAID, kể cả vé CHECKED, được refund 100% theo D-017; log check-in giữ nguyên và không mở lại ghế\n- Tickets → CANCELLED kể cả CHECKED (QR vô hiệu); check-in logs bất biến\n- Không đưa ghế của concert CANCELLED về AVAILABLE
 
     NT->>NT: Gửi email + SMS + Push đến tất cả khách hàng\n(Sử dụng queue để không làm quá tải email server)
 
