@@ -199,7 +199,6 @@ classDiagram
         +String full_name
         +String phone_number
         +String email
-        +Vai trò: Người thanh toán tiền
     }
     class Ticket_Attendee {
         +UUID ticket_id
@@ -207,10 +206,11 @@ classDiagram
         +String attendee_name
         +String attendee_phone
         +String attendee_id_number
-        +Vai trò: Người thực tế vào cổng
     }
     User_Buyer "1" --> "1..4" Ticket_Attendee : Mua vé cho
 ```
+
+Người mua là người thanh toán; người sử dụng vé là người thực tế vào cổng.
 
 ### Bảng Quy Định Nhập Liệu Nghiệp Vụ Khi Checkout:
 
@@ -240,7 +240,7 @@ Hệ thống thiết lập quy trình ghi dữ liệu chuẩn **Always On Availa
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Cổng as VNPay / MoMo
+    participant Gateway as VNPay / MoMo
     participant API as Payment Webhook API
     participant Cache as Redis Idempotency Lock
     participant PriDB as SQL Server Primary (EC2 AZ-A)
@@ -248,7 +248,7 @@ sequenceDiagram
     participant Outbox as Transactional Outbox
     participant Client as Ứng dụng Khách Hàng
 
-    Cổng->>API: Gửi IPN Webhook (Mã giao dịch, Số tiền, Chữ ký HMAC)
+    Gateway->>API: Gửi IPN Webhook (Mã giao dịch, Số tiền, Chữ ký HMAC)
     API->>API: 1. Kiểm tra HMAC SHA512 & Khớp đúng 100% số tiền đơn
     API->>Cache: 2. SETNX lock:ipn:{txn_ref} EX 30s (Tránh 2 webhook xử lý song song)
     
@@ -263,7 +263,7 @@ sequenceDiagram
     PriDB-->>API: Transaction Commit Thành Công 100%
     
     API->>Cache: 6. Ghi nhận Idempotency DONE (TTL 24h) & Nhả Lock
-    API-->>Cổng: 7. Phản hồi HTTP 200 {"RspCode":"00","Message":"Confirm Success"}
+    API-->>Gateway: 7. Phản hồi HTTP 200 {"RspCode":"00","Message":"Confirm Success"}
     
     API->>Outbox: 8. Kích hoạt Outbox Publisher gửi tin sang RabbitMQ
     Outbox-->>Client: 9. WebSocket / Push Notification: "Chúc mừng! Vé của bạn đã sẵn sàng!"
@@ -432,4 +432,3 @@ Bằng việc siết chặt toàn diện:
 * 🔒 **Bảo toàn giao dịch tuyệt đối:** Đồng bộ Primary - Secondary và kiểm soát Idempotency đa tầng.
 
 Hệ thống tự tin mang lại một nền tảng bán vé **Hiện đại — Công bằng — Ổn định — An toàn tuyệt đối**, sẵn sàng phục vụ các siêu đại nhạc hội mang tầm vóc quốc tế!
-
