@@ -1,4 +1,4 @@
-﻿# UC01 — Đăng Ký & Đăng Nhập Tài Khoản (Registration & Login)
+# UC01 — Đăng Ký & Đăng Nhập Tài Khoản (Registration & Login)
 
 ## 1. Thông Tin Chung
 
@@ -8,7 +8,7 @@
 | **Tên Use Case** | Đăng Ký & Đăng Nhập Tài Khoản |
 | **Module** | 01 — Account Module |
 | **Actor chính** | Khách vãng lai (Guest), Khách hàng (Customer) |
-| **Actor phụ** | Google OAuth2 Provider, Apple ID Provider, SMS Gateway (OTP) |
+| **Actor phụ** | Google OAuth2 Provider, Apple ID Provider, AWS End User Messaging SMS (OTP) |
 | **Mức độ ưu tiên** | 🔴 Critical — Bắt buộc có trước mọi tính năng khác |
 | **BR liên quan** | BR-QUEUE-004 (1 tài khoản / 1 số thứ tự), BR-PAY-001 |
 | **State Machine liên quan** | Không trực tiếp |
@@ -30,7 +30,7 @@ flowchart LR
   customer["👤 Khách hàng"]
   google["Google OAuth2 Provider"]
   apple["Apple ID Provider"]
-  sms["SMS Gateway"]
+  sms["AWS End User Messaging SMS"]
   subgraph SYS["Concert Ticketing System — UC01"]
     direction TB
     register(["Đăng ký bằng email hoặc số điện thoại"])
@@ -200,11 +200,11 @@ flowchart LR
 
 | Use Case Con | Actor Chính | Actor Phụ (External System) | Ghi Chú |
 |---|---|---|---|
-| UC01.1 — Đăng ký tài khoản mới | Guest | SMS Gateway (gửi OTP) | Bao gồm validate SĐT và xác thực OTP |
+| UC01.1 — Đăng ký tài khoản mới | Guest | AWS End User Messaging SMS (gửi OTP) | Bao gồm validate SĐT và xác thực OTP |
 | UC01.2 — Đăng nhập Email/SĐT + Mật khẩu | Guest | — | Include: kiểm tra trạng thái tài khoản |
 | UC01.3 — Đăng nhập qua Google OAuth2 | Guest | Google OAuth2 Provider | Extend UC01.2 |
 | UC01.4 — Đăng nhập qua Apple ID | Guest | Apple ID Provider | Extend UC01.2 |
-| UC01.5 — Quên mật khẩu / Đặt lại mật khẩu | Guest | SMS Gateway / Email Service | Include UC01.1 (OTP verify) |
+| UC01.5 — Quên mật khẩu / Đặt lại mật khẩu | Guest | AWS End User Messaging SMS / Amazon SES | Include UC01.1 (OTP verify) |
 | UC01.6 — Đăng xuất | Customer | — | Vô hiệu hóa Refresh Token |
 
 ---

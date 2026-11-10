@@ -1,4 +1,4 @@
-﻿# UC04 — Tìm Kiếm & Lọc Concert (Browse, Search & Filter Concerts)
+# UC04 — Tìm Kiếm & Lọc Concert (Browse, Search & Filter Concerts)
 
 ## 1. Thông Tin Chung
 
@@ -156,7 +156,7 @@ flowchart LR
 | Use Case Con | Actor Chính | Actor Phụ | Ghi Chú |
 |---|---|---|---|
 | UC04.1 — Xem trang chủ & danh sách concert | Guest, Customer | — | Không cần đăng nhập |
-| UC04.2 — Tìm kiếm theo từ khóa | Guest, Customer | Search Engine (Elasticsearch) | Autocomplete, full-text search |
+| UC04.2 — Tìm kiếm theo từ khóa | Guest, Customer | SQL Server Full-Text Search / indexed search (baseline) | Autocomplete, full-text search |
 | UC04.3 — Lọc theo tiêu chí | Guest, Customer | — | Combine filter; URL params |
 | UC04.4 — Sắp xếp kết quả | Guest, Customer | — | Client-side sort hoặc server-side |
 | UC04.5 — Xem chi tiết concert | Guest, Customer | — | Dẫn đến UC05 |

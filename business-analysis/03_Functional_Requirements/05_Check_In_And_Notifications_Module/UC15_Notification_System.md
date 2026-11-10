@@ -8,7 +8,7 @@
 | **Tên Use Case** | Hệ Thống Thông Báo Đa Kênh (Notification System) |
 | **Module** | 05 — Check-In & Notifications Module |
 | **Actor chính** | System (Tự động kích hoạt theo sự kiện), Admin, Organizer |
-| **Actor phụ** | Khách hàng (Customer - Người nhận), Email Gateway (SES/SendGrid), Push Service (FCM/APNs), SMS Gateway (Twilio/Brandname SMS) |
+| **Actor phụ** | Khách hàng (Customer - Người nhận), Amazon SES, SNS Mobile Push (APNs/FCM destination), AWS End User Messaging SMS |
 | **Mức độ ưu tiên** | 🔴 High |
 | **Precondition** | Người nhận có tài khoản hoặc thông tin liên lạc hợp lệ (email, số điện thoại, FCM token); sự kiện nghiệp vụ được phát sinh từ các service nội bộ |
 | **Postcondition** | Thông báo được ghi nhận và đưa qua hàng đợi bền vững; trạng thái PENDING/SENT/DELIVERED/READ/FAILED được lưu trong notifications; thao tác quản trị được audit. Provider delivery chỉ được xác nhận khi có receipt tương ứng |
@@ -31,9 +31,9 @@ flowchart LR
   admin["👤 Admin"]
   organizer["👤 Organizer"]
   customer["👤 Customer / Người nhận"]
-  email["Email Gateway"]
-  push["Push Service (FCM/APNs)"]
-  sms["SMS Gateway"]
+  email["Amazon SES"]
+  push["Amazon SNS Mobile Push → APNs / FCM"]
+  sms["AWS End User Messaging SMS"]
   subgraph SYS["Notification Engine — UC15"]
     direction TB
     transactional(["Tiếp nhận và gửi thông báo giao dịch"])
@@ -76,7 +76,7 @@ flowchart LR
 | 2 | Notification Consumer | Đọc event từ RabbitMQ queue; tạo notification theo event, recipient và channel với deduplication key ổn định | Unique constraint trong SQL Server là nguồn bảo đảm duy nhất; Redis chỉ được dùng làm cache tùy chọn, không làm nguồn sự thật |
 | 3 | System | Đọc tùy chọn marketing/show reminder từ notification_preferences_json; áp dụng consent và trạng thái xác minh từng kênh | Thông báo in-app bắt buộc về giao dịch/bảo mật không bị tắt; các kênh gửi ngoài phải phù hợp preference và ma trận sự kiện |
 | 4 | System | Nạp mẫu thông điệp (Notification Template), biên dịch dữ liệu động (Tên khách, Mã vé, Tên concert, Số ghế, Tổng tiền, Mã QR vé đính kèm) | Tạo nội dung hoàn chỉnh cho từng kênh |
-| 5 | Dispatcher | Chuyển tiếp tác vụ gửi tới các Adapter kênh tương ứng (Email Worker, Push Worker, In-App DB Worker) | Thực hiện gọi API đối tác (AWS SES / Firebase Cloud Messaging) song song |
+| 5 | Dispatcher | Chuyển tiếp tác vụ gửi tới các Adapter kênh tương ứng (Email Worker, Push Worker, In-App DB Worker) | Thực hiện gọi API đối tác (Amazon SES / Amazon SNS Mobile Push / AWS End User Messaging SMS) song song |
 | 6 | System | Ghi PENDING và attempt metadata; cập nhật SENT khi provider chấp nhận, DELIVERED khi có receipt, FAILED khi lỗi cuối cùng; retry giữ cùng deduplication key | Mục tiêu là commit/đưa tác vụ vào outbox trong ≤5 giây; không đặt SLA giao tới thiết bị cho provider bên ngoài |
 
 ---
@@ -99,7 +99,7 @@ flowchart LR
 | Bước | Mô tả |
 |---|---|
 | 1 | Hệ thống kích hoạt gửi cảnh báo thanh toán hoặc mã vé qua Push Notification tới điện thoại người dùng. |
-| 2 | Nhà mạng hoặc Google FCM trả về mã lỗi thiết bị không online hoặc Token không hợp lệ (`DEVICE_UNREGISTERED`). |
+| 2 | Amazon SNS / APNs / FCM trả về mã lỗi thiết bị không online hoặc Token không hợp lệ (`DEVICE_UNREGISTERED`). |
 | 3 | Hệ thống bắt sự kiện thất bại và tự động kích hoạt **Kênh Dự Phòng Cấp 1 (Fallback to Email)**. |
 | 4 | Chỉ gửi SMS dự phòng khi sự kiện được đánh dấu cần thiết, số điện thoại đã xác minh, consent/chính sách cho phép và ma trận sự kiện quy định kênh này; ghi trạng thái riêng, không khẳng định đã giao chỉ từ việc gửi request. |
 
@@ -118,7 +118,7 @@ flowchart LR
 | ID | Điều kiện ngoại lệ | Cơ chế xử lý | Hành vi hệ thống |
 |---|---|---|---|
 | EX-01 | Email bị dội (Hard Bounce / Mailbox Full) | Provider trả bounce không tạm thời | Ghi notifications.status=FAILED và provider_response đã lọc; đặt users.email_delivery_status=BOUNCED, dừng marketing email tới địa chỉ đó và yêu cầu người dùng cập nhật. Không báo email đã giao |
-| EX-02 | **Nhà mạng SMS từ chối do số thuê bao khóa 2 chiều hoặc chặn tin quảng cáo** | SMS Gateway trả về lỗi không thể chuyển phát | Lưu log lỗi `SMS_UNDELIVERED`; chuyển sang gửi qua Email và Notification In-App |
+| EX-02 | **Nhà mạng SMS từ chối do số thuê bao khóa 2 chiều hoặc chặn tin quảng cáo** | AWS End User Messaging SMS hoặc carrier trả về lỗi chuyển phát | Lưu log lỗi `SMS_UNDELIVERED`; chuyển sang gửi qua Email và Notification In-App |
 | EX-03 | **Nghẽn hàng đợi thông báo trong giờ mở bán cao điểm (Queue Congestion)** | Lưu lượng tạo đơn hàng tăng vọt tạo ra hàng trăm nghìn thông báo cùng lúc | Hệ thống kích hoạt cơ chế phân tách hàng đợi (Priority Queue Sharding): Hàng đợi `Critical` (OTP, Mã vé, Báo hết hạn ghế) được ưu tiên xử lý trước; hàng đợi `Marketing` bị hoãn lại chạy sau giờ cao điểm |
 | EX-04 | Gửi trùng do broker redelivery | Consumer nhận event lặp hoặc retry | SQL Server unique constraint trên deduplication key giữ đúng một notification logic; consumer ack bản lặp sau khi xác nhận bản ghi đã tồn tại. Redis chỉ là cache tăng tốc theo BR-NOTI-003 |
 
@@ -185,8 +185,8 @@ flowchart LR
 
 | Mã Use Case Con | Tên Use Case Con | Actor Chính | Actor Phụ | Mục Đích Nghiệp Vụ |
 |---|---|---|---|---|
-| **UC15.1** | Gửi Mã OTP Xác Thực Giao Dịch / Đăng Ký | System | SMS Gateway, Email API | Bảo mật tài khoản & xác thực số điện thoại |
-| **UC15.2** | Gửi Thông Báo Vé Điện Tử & Đơn Hàng Thành Công | System | Push Service, Email Worker | Xác nhận giao dịch mua vé |
+| **UC15.1** | Gửi Mã OTP Xác Thực Giao Dịch / Đăng Ký | System | AWS End User Messaging SMS, Amazon SES | Bảo mật tài khoản & xác thực số điện thoại |
+| **UC15.2** | Gửi Thông Báo Vé Điện Tử & Đơn Hàng Thành Công | System | Amazon SES, Amazon SNS Mobile Push | Xác nhận giao dịch mua vé |
 | **UC15.3** | Cảnh Báo Sắp Hết Hạn Giữ Ghế (Real-Time Toast) | System | WebSocket, SSE, Push | Thúc đẩy hoàn tất thanh toán |
 | **UC15.4** | Phát Sóng Thông Báo Khẩn Cấp Sự Kiện (Broadcast) | Admin, Organizer | Bulk Dispatcher Worker | Thông báo dời lịch, hủy show, an ninh |
 | **UC15.5** | Xem & Đánh Dấu Đã Đọc Hộp Thư Thông Báo In-App | Khách hàng | Notification DB | Quản lý thông báo cá nhân trên App/Web |

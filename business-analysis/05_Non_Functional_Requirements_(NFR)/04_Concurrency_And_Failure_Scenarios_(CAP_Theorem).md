@@ -40,11 +40,11 @@ flowchart LR
 
 ## 2. Các Kịch Bản Sự Cố Phân Tán Trọng Yếu & Cơ Chế Xử Lý (Failure Scenarios)
 
-### Kịch Bản 1: Node Redis Master Bị Sập Trong Giờ Mở Bán Vé
-- **Hiện tượng:** Máy chủ Redis Master giữ khóa ghế của Zone VIP bị mất nguồn hoặc quá tải bộ nhớ đột ngột.
+### Kịch Bản 1: ElastiCache failover trong giờ mở bán vé
+- **Hiện tượng:** Node primary của Amazon ElastiCache for Redis OSS bị lỗi hoặc quá tải trong giờ cao điểm.
 - **Nguy cơ:** Mất khóa ghế đang giữ, dẫn đến việc người khác có thể chọn đè vào ghế vừa được giữ.
 - **Giải pháp xử lý:**
-  1. **Tự động chuyển vùng (Redis Cluster Failover):** Các node Redis Replica phát hiện Master không phản hồi Heartbeat sau 3 giây, tiến hành bầu chọn (Election) và nâng một Replica lên làm Master mới.
+  1. **Managed failover (ElastiCache):** cấu hình Multi-AZ/automatic failover theo topology được hỗ trợ; failover có thể gây gián đoạn ngắn và thời gian thực tế phải đo. Không giả định phát hiện sau 3 giây hoặc bầu chọn/khôi phục trong một thời hạn chưa kiểm chứng.
   2. **Bảo vệ bằng Database Source of Truth:** Mọi yêu cầu xác nhận đơn hàng bắt buộc phải kiểm tra lại trạng thái trong cơ sở dữ liệu SQL Server (`SELECT status FROM dbo.seats WITH (UPDLOCK, ROWLOCK) WHERE id = ? trong transaction`). Nếu Redis bị mất dữ liệu khóa, SQL Server đóng vai trò chốt chặn cuối cùng ngăn chặn bán trùng.
   3. **Tái lập bộ đệm (Cache Re-hydration Worker):** Ngay sau khi Master mới online, một tiến trình nền quét các bản ghi `seat_holds` đang `ACTIVE` trong SQL Server và đồng bộ ngược lại vào Redis.
 
@@ -95,7 +95,7 @@ flowchart LR
 ```mermaid
 flowchart TD
   incident["Failure detected"]
-  redis["Redis Master unavailable"]
+  redis["ElastiCache primary node unavailable"]
   redisAction["Failover; verify against SQL Server; rehydrate ACTIVE holds"]
   partition["Cross-AZ partition"]
   quorum["Only quorum partition may accept writes;<br/>minority becomes read-only or rejects"]

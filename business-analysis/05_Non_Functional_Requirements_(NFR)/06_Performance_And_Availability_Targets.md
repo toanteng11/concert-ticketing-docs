@@ -23,7 +23,7 @@ SLO baseline duy nhất là **99.95% mỗi tháng** cho critical first-party pur
 Error budget 30 ngày là 0.05% thời lượng đo, tương đương 21.6 phút. Khi còn trên 50%, phát hành theo quy trình bình thường; khi đã tiêu thụ trên 75%, đóng băng thay đổi không khẩn cấp; khi cạn, dừng release tính năng và tập trung xử lý nguyên nhân độ tin cậy. Bảo trì có kế hoạch phải được loại trừ/bao gồm nhất quán trong SLI theo chính sách đo được công bố; không được âm thầm bỏ khỏi mẫu số.
 ## 3. Bảng Mục Tiêu Độ Trễ Phản Hồi Chi Tiết (Latency SLOs)
 
-Độ trễ được đo lường tại tầng API Gateway từ lúc nhận byte đầu tiên của request đến lúc gửi byte cuối cùng của response cho client, phân loại theo các phân vị:
+Độ trễ end-to-end được đo từ lúc ALB nhận request đến byte cuối cùng gửi về client; bao gồm xử lý trong Spring Boot và dependency theo từng endpoint. Phân loại theo các phân vị:
 - **P50 (Median):** $50\%$ số người dùng nhận phản hồi nhanh hơn mức này.
 - **P95:** $95\%$ số người dùng nhận phản hồi nhanh hơn mức này.
 - **P99 (Tail Latency):** Phản ánh trải nghiệm của nhóm $1\%$ người dùng gặp điều kiện bất lợi nhất (mạng xa, giờ mở bán cực điểm).
@@ -45,12 +45,12 @@ Error budget 30 ngày là 0.05% thời lượng đo, tương đương 21.6 phút
 
 | Thành phần hệ thống | Thông lượng định danh (Sustained Throughput) | Khả năng chịu tải đỉnh ngắn hạn (Burst Capacity) | Tiêu chí đạt chuẩn |
 |---|---|---|---|
-| **Tầng Tiếp Nhận (API Gateway)** | $35.000\text{ QPS}$ | $45.000\text{ QPS}$ trong 5 phút | Không rơi rụng gói tin (Packet drop rate $= 0\%$) |
-| **Tầng Hàng Chờ Ảo (Redis Queue)** | $32.000\text{ QPS}$ | $40.000\text{ QPS}$ | CPU Redis không vượt quá $75\%$ |
+| **Ingress/API (ALB + Spring Boot)** | 35.000 QPS target | 45.000 QPS trong 5 phút target | Đạt latency/error thresholds đã thống nhất; không coi đây là bằng chứng capacity cho tới benchmark D-030 |
+| **Queue state (ElastiCache for Redis OSS)** | 32.000 QPS target | 40.000 QPS target | Đạt latency/error/eviction/headroom thresholds sau benchmark D-030 |
 | **Tầng Giữ Ghế (Distributed Locking)** | $1.500\text{ TPS}$ | $3.500\text{ TPS}$ | Sai số giữ trùng ghế $= 0$ (Zero Double-Booking) |
 | **Tầng Giao Dịch Ghi (SQL Server Primary)** | $150\text{ TPS}$ | $300\text{ TPS}$ | Thời gian giữ Connection HikariCP $< 50\text{ ms}$ |
 | **Tầng Soát Vé Tại Cổng (Check-In Staff)** | $20\text{ TPS}$ | $100\text{ TPS}$ | Phản hồi tại thiết bị cầm tay $\le 500\text{ ms}$ |
-| **Phân Phối Thông Báo (RabbitMQ D-025)** | $3.000\text{ msgs/s}$ | $8.000\text{ msgs/s}$ | Queue depth/consumer lag trở về ngưỡng mục tiêu trong 10 phút; đo và xác nhận trong release gate D-030 |
+| **Phân Phối Thông Báo (Amazon MQ for RabbitMQ)** | 3.000 msgs/s target | 8.000 msgs/s target | Queue depth/consumer lag trở về ngưỡng đo được; xác nhận bằng release gate D-030 |
 
 ---
 

@@ -6,10 +6,10 @@ Quy hoạch dung lượng lưu trữ (**Storage Capacity Planning**) là tiền 
 
 Tài liệu này lượng hóa chi tiết nhu cầu lưu trữ trên 5 tầng lưu trữ dữ liệu chuyên biệt:
 1. **Cơ sở dữ liệu Quan hệ (RDBMS - SQL Server):** Lưu trữ dữ liệu giao dịch cốt lõi (ACID-compliant).
-2. **Bộ đệm In-Memory (Redis Cluster):** Lưu trữ phiên làm việc, hàng chờ ảo, khóa giữ ghế và bộ đếm rate limit.
-3. **Message Broker (RabbitMQ):** Lưu job/event bất đồng bộ; SQL Server transactional outbox là nguồn bền vững để phát lại tối đa 7 ngày.
-4. **Kho Lưu Trữ Đối Tượng (Object Storage - AWS S3 / MinIO):** Lưu trữ hình ảnh vé, tài liệu pháp lý, hóa đơn PDF và file xuất báo cáo.
-5. **Hệ Thống Phân Tích & Nhật Ký:** Log/search store phụ; SQL Server vẫn là nguồn sự thật cho dữ liệu giao dịch.
+2. **Bộ đệm In-Memory (Amazon ElastiCache for Redis OSS):** Lưu trữ phiên làm việc, hàng chờ ảo, khóa giữ ghế và bộ đếm rate limit.
+3. **Message Broker (Amazon MQ for RabbitMQ):** Lưu job/event bất đồng bộ; SQL Server transactional outbox là nguồn bền vững để phát lại tối đa 7 ngày.
+4. **Kho Lưu Trữ Đối Tượng (Amazon S3):** Lưu trữ hình ảnh vé, tài liệu pháp lý, hóa đơn PDF và file xuất báo cáo.
+5. **Giám sát và nhật ký vận hành (Amazon CloudWatch):** Metrics/logs phục vụ vận hành; SQL Server vẫn là nguồn sự thật cho dữ liệu giao dịch.
 
 ---
 
@@ -51,7 +51,7 @@ Hệ thống sử dụng hệ số mở rộng **Hệ số Dự phòng & Chỉ m
 
 ---
 
-## 4. Ước Tính Bộ Đệm In-Memory (Redis Cluster Sizing)
+## 4. Ước Tính Bộ Đệm In-Memory (Amazon ElastiCache for Redis OSS sizing)
 
 Redis được dùng để lưu trữ dữ liệu nóng có độ trễ cực thấp trong giờ cao điểm:
 
@@ -66,25 +66,21 @@ Redis được dùng để lưu trữ dữ liệu nóng có độ trễ cực th
 | **Hệ số an toàn bộ nhớ (Redis Overhead & Maxmemory Buffer)** | Hệ số nhân $\times 2.0$ để tránh rủi ro phân mảnh bộ nhớ (Fragmentation) | — | $\times 2.0$ | — |
 | **TỔNG DUNG LƯỢNG RAM REDIS ĐỈNH** | $(6.4 + 5.0 + 1.5 + 50.0 + 9.6 + 2.0) \times 2$ | — | **$\approx 150\text{ MB}$ (Đỉnh)** | — |
 
-> **Khuyến nghị cấu hình:**  
-> Mặc dù dữ liệu thực tế chỉ chiếm $< 200\text{ MB}$, hệ thống yêu cầu một cụm **Redis Cluster gồm 3 Master + 3 Replica**, mỗi node cấp phát **4 GB RAM** (Tổng RAM cụm = 24 GB) để đảm bảo:
-> 1. Xử lý thông lượng mạng lớn ($> 50.000\text{ ops/second}$).
-> 2. Đủ bộ nhớ đệm cho các tác vụ snapshot RDB và lưu bản ghi AOF mà không gây áp lực tràn RAM (OOM Killer).
-
+> **Khuyến nghị cấu hình AWS:** Phần ước tính bộ nhớ dữ liệu nóng khoảng 150 MB chỉ là mô hình lý thuyết, chưa gồm đầy đủ overhead, peak churn, replication và yêu cầu failover. Không suy ra node class hoặc số shard/replica chỉ từ con số này. Dùng Amazon ElastiCache for Redis OSS; chốt engine version, topology, node class, số replica, maxmemory/headroom và chi phí sau khi kiểm thử tương thích, benchmark tải và xác nhận quota/Region. Redis lỗi không được làm sai trạng thái giao dịch; SQL Server vẫn là nguồn quyết định cuối.
 ---
 
 ## 5. Ước Tính RabbitMQ Queue & Transactional Outbox
 
-RabbitMQ durable queues vận chuyển event/job; SQL Server transactional outbox là nguồn bền vững để retry/replay tối đa 7 ngày theo D-029. Backlog và payload size ở broker là giả định sizing, không phải retention của nguồn sự thật.
+Amazon MQ for RabbitMQ durable queues vận chuyển event/job; SQL Server transactional outbox là nguồn bền vững để retry/replay tối đa 7 ngày theo D-029. Backlog và payload size ở broker là giả định sizing, không phải retention của nguồn sự thật.
 
 | Tham số định lượng | Giá trị tính toán | Giải thích |
 |---|---|---|
 | **Kích thước trung bình 1 Event message** | $1\text{ KB}$ ($1.024\text{ bytes}$) | Chuỗi JSON chứa metadata sự kiện và payload |
 | **Số sự kiện phát sinh trong 1 giờ mở bán cao điểm** | $1.500.000$ messages | Xếp hàng, chọn ghế, giữ ghế, gia hạn, trả ghế, tạo đơn, thanh toán |
 | **Dung lượng phát sinh giờ cao điểm** | $1.500.000 \times 1\text{ KB} \approx \mathbf{1.5\text{ GB}}$ | Dữ liệu thô |
-| **Bản sao quorum queue (mục tiêu 3 replicas)** | Dung lượng thực tế phụ thuộc queue quorum, payload, backlog và topology | Cấu hình RabbitMQ HA theo D-025/D-030; không lấy Kafka replication factor làm sizing |
-| **Outbox replay window** | Tối đa 7 ngày theo D-029 | SQL Server giữ event bền vững; thời hạn lưu tại RabbitMQ do queue policy vận hành, không thay thế outbox |
-| **Tổng dung lượng đĩa cứng message broker yêu cầu (Năm 1)** | Khoảng **50 GB – 100 GB** đĩa SSD trên mỗi Broker | Hoàn toàn đáp ứng dư dả cho toàn bộ các đợt mở bán trong tuần |
+| **Quorum queue replicas (nếu bật)** | Dung lượng phụ thuộc số bản sao, backlog, payload và topology | Không mặc định số replica; kiểm tra queue type, giới hạn và thiết kế Amazon MQ theo Region trước khi cấu hình |
+| **Outbox replay window** | Tối đa 7 ngày theo D-029 | SQL Server giữ event bền vững; thời hạn lưu tại Amazon MQ do queue policy vận hành, không thay thế outbox |
+| **Dung lượng Amazon MQ cần thiết (Năm 1)** | Chưa chốt | Xác định từ backlog thực đo, thời gian lưu, message rate, replicated queue policy, giới hạn dịch vụ và benchmark D-030 |
 
 ---
 
@@ -107,15 +103,15 @@ Object Storage lưu trữ các tài nguyên tĩnh và tệp nhị phân có dung
 ## 7. Chiến Lược Phân Tầng Lưu Trữ & Vòng Đời Dữ Liệu (Data Tiering & Lifecycle Policy)
 
 Nhằm tối ưu hóa chi phí vận hành hạ tầng đám mây:
-1. **Dữ liệu Nóng (Hot Tier - NVMe SSD & AWS S3 Standard):**
+1. **Dữ liệu Nóng (Hot Tier - Amazon S3 Standard):**
    - Áp dụng cho: Dữ liệu sự kiện đang diễn ra hoặc đã kết thúc dưới 30 ngày.
-   - Truy cập độ trễ thấp tức thì ($< 10\text{ ms}$).
-2. **Dữ liệu Ấm (Warm Tier - AWS S3 Infrequent Access - S3-IA):**
+   - Dùng cho dữ liệu truy cập thường xuyên; latency thực tế phụ thuộc kích thước object, Region, network path và client.
+2. **Dữ liệu Ấm (Warm Tier - Amazon S3 Standard-IA):**
    - Áp dụng cho: Vé điện tử, hóa đơn, hình ảnh của các concert đã kết thúc từ 31 đến 180 ngày.
-   - Tiết kiệm $40\%$ chi phí lưu trữ so với Hot Tier.
-3. **Dữ liệu Lạnh & Lưu Trữ Pháp Lý (Cold Tier - AWS S3 Glacier Flexible):**
-   - Áp dụng cho: Dữ liệu giao dịch, hợp đồng pháp lý, nhật ký soát vé của sự kiện trên 180 ngày (lưu trữ phục vụ kiểm toán tài chính và nghĩa vụ thuế trong 5 năm theo quy định pháp luật Việt Nam).
-   - Tiết kiệm đến $80\%$ chi phí lưu trữ. Thời gian phục hồi dữ liệu từ 1 đến 5 giờ.
+   - Phí lưu trữ, truy xuất và thời lượng tối thiểu phụ thuộc class/Region; xác nhận bằng AWS Pricing Calculator và access pattern thực tế.
+3. **Dữ liệu Lạnh & Lưu Trữ Pháp Lý (Cold Tier - Amazon S3 Glacier Flexible Retrieval):**
+   - Áp dụng cho: Dữ liệu giao dịch, hợp đồng pháp lý, nhật ký soát vé của sự kiện trên 180 ngày (lưu trữ phục vụ kiểm toán tài chính và thời hạn lưu trữ do Legal/Finance xác nhận trước khi áp dụng lifecycle).
+   - Chi phí và thời gian truy xuất phụ thuộc retrieval tier, Region và khối lượng; kiểm tra yêu cầu restore trước khi áp dụng lifecycle.
 
 <!-- BEGIN MERMAID DIAGRAM CAP-STORAGE -->
 ### Các tầng lưu trữ và vòng đời dữ liệu
@@ -123,24 +119,44 @@ Nhằm tối ưu hóa chi phí vận hành hạ tầng đám mây:
 ```mermaid
 flowchart LR
   tx["Giao dịch và trạng thái nghiệp vụ"] --> sql[("SQL Server<br/>dữ liệu quan hệ / giao dịch")]
-  transient["Queue state, seat locks, counters"] --> redis[("Redis<br/>dữ liệu nóng, TTL")]
-  events["SQL transactional outbox"] --> broker["RabbitMQ<br/>durable queues, retry, DLQ"]
-  assets["Poster, sơ đồ ghế, PDF vé, file xuất"] --> s3["S3 Standard / object storage"]
-  s3 --> warm["S3 Infrequent Access<br/>warm tier"] --> cold["S3 Glacier Flexible<br/>cold/archive tier"]
-  sql --> backup["Backup and recovery storage"]
-  redis --> ttl["TTL expiry; không archive persistent session state"]
-  note["No voucher table or separate NoSQL store in baseline. Outbox replay up to 7 days; operational logs are separate from transaction truth."]
-  broker -.-> note
+  transient["Queue state, seat locks, counters"] --> redis[("Amazon ElastiCache for Redis OSS<br/>dữ liệu nóng, TTL")]
+  events["SQL transactional outbox"] --> broker["Amazon MQ for RabbitMQ<br/>durable queues, retry, DLQ"]
+  assets["Poster, sơ đồ ghế, PDF vé, file xuất"] --> s3["Amazon S3 Standard"]
+  s3 --> warm["S3 Standard-IA<br/>warm tier"] --> cold["S3 Glacier Flexible Retrieval<br/>cold/archive tier"]
+  sql --> agent["SQL Agent<br/>FULL / DIFF / LOG backups"]
+  agent --> stage[("Encrypted EBS staging")]
+  stage --> uploader["AWS CLI/SDK + EC2 IAM role"]
+  uploader --> bkp[("S3 backup bucket<br/>KMS + Versioning + Object Lock")]
+  bkp --> repl[("Isolated DR account/Region<br/>S3 CRR + replication metrics")]
+  sql --> vss["AWS Backup VSS<br/>EC2/EBS system recovery"]
+  vss --> vault[("Locked AWS Backup Vault")]
+  redis --> ttl["TTL expiry; rebuild temporary state from SQL/outbox"]
+  opslog["Operational logs"] --> cwlogs["Amazon CloudWatch Logs<br/>retention 30 days; filtered PII"]
+  note["AG is HA/DR, not a backup. PITR uses the SQL FULL/DIFF/LOG chain. Redis is not transaction truth."]
 ```
 <!-- END MERMAID DIAGRAM CAP-STORAGE -->
 
 
 ---
 
-## 8. Kế Hoạch Sao Lưu & Phục Hồi Dữ Liệu (Backup & RTO/RPO Targets)
+## 8. Kế Hoạch Sao Lưu & Phục Hồi Dữ Liệu (Backup & RPO/RTO Targets)
 
-| Loại dữ liệu | Phương thức sao lưu | Tần suất thực hiện | Thời gian lưu giữ bản sao | Điểm phục hồi mục tiêu (RPO) | Thời gian phục hồi mục tiêu (RTO) |
-|---|---|---|---|---|---|
-| **Cơ sở dữ liệu SQL Server** | Native full/differential/transaction-log backups | Full hằng ngày; differential mỗi 6 giờ; transaction log mỗi 5 phút | 35 ngày | Local AG: RPO 0 / RTO ≤5 phút; cross-region DR: RPO ≤5 phút / RTO ≤60 phút theo D-026; cần diễn tập để xác nhận |
-| **Dữ liệu Redis Cache** | Cache/queue/lock có TTL; tái tạo từ nguồn có thẩm quyền khi cần | Không áp dụng sao lưu bắt buộc cho dữ liệu ephemeral | Không lưu làm hồ sơ giao dịch | Không áp dụng RPO/RTO giao dịch; mất Redis không được làm sai dữ liệu giao dịch |
-| **Object Storage (S3)** | Versioning/replication theo cấu hình bucket đã duyệt | Theo chính sách vận hành thực tế | Theo retention policy đã duyệt | Cần xác nhận theo cấu hình provider | Cần xác nhận qua restore test |
+| Kịch bản/dữ liệu | Phương thức và lịch | Retention | Mục tiêu phục hồi |
+|---|---|---|---|
+| SQL Server — PITR | SQL Agent: FULL hằng ngày, DIFF mỗi 6 giờ, LOG mỗi 5 phút; ghi vào EBS staging mã hóa rồi upload object đã hoàn tất lên S3 bằng AWS CLI/SDK và IAM instance role | PITR 35 ngày; giữ chuỗi/object tối thiểu 37 ngày để bao phủ full backup nền và phần đệm chuỗi | Backup fallback: RPO ≤30 phút, RTO ≤4 giờ là mục tiêu khởi điểm chưa benchmark; đo end-to-end tới khi log object đã replicate |
+| Same-Region SQL HA | Always On AG synchronous Primary + secondary | Không thay thế backup | RPO 0 / RTO ≤5 phút theo D-026; xác nhận trong diễn tập |
+| Cross-Region SQL DR | Ưu tiên asynchronous AG replica; S3 copy là đường PITR thay thế | Theo D-026 và backup-chain policy | AG: RPO ≤5 phút / RTO ≤60 phút mục tiêu thiết kế; không áp sang S3 restore |
+| EC2/EBS SQL host recovery | AWS Backup Windows VSS application-consistent snapshots hằng ngày nếu host/instance được hỗ trợ; Vault Lock; Restore Testing | 14 ngày cho bản snapshot máy chủ | RPO theo recovery point thành công gần nhất; RTO đo qua restore test. PITR giao dịch dùng riêng native SQL backup chain |
+| Dữ liệu Redis | Cache/queue/lock tạm; dựng lại trạng thái nghiệp vụ từ SQL/outbox | Không giữ như bản sao giao dịch | Không áp RPO/RTO nghiệp vụ cho Redis; fail-safe và tái tạo/invalidate state |
+| Tệp trong S3 | Versioning, KMS và CRR theo bucket, retention theo loại dữ liệu | Theo policy dữ liệu/Legal/Finance | Theo test phục hồi object và trạng thái replication |
+
+### Công thức ước lượng dung lượng backup
+
+Gọi **F** là dung lượng trung bình của một full backup đã nén, **D** là dung lượng trung bình của một differential, **L** là dung lượng trung bình của một transaction-log backup 5 phút.
+
+- SQL backup vùng chính trong retention-chain 37 ngày: **37 × F + 37 × 4 × D + 37 × 288 × L**.
+- S3 vùng DR cần dung lượng xấp xỉ tương đương bản nguồn; tổng dung lượng object hai Region xấp xỉ **2 × dung lượng vùng chính**, chưa gồm version thừa và AWS Backup snapshots.
+- EBS staging phải chứa được ít nhất một full backup đang tạo cùng log backups phát sinh trong thời gian S3 gián đoạn đã chọn làm giả định thiết kế; cộng headroom vận hành. Chốt dung lượng bằng kích thước backup nén, tốc độ log thực tế và kiểm thử upload.
+- Không lấy dung lượng database hiện tại nhân 35 để đại diện toàn bộ backup: cần tính riêng FULL, DIFF, LOG, staging, CRR và snapshot; mọi con số phải được đo ở dữ liệu gần production.
+
+Các target RPO/RTO là tiêu chí nghiệm thu thiết kế, chưa phải kết quả đã đo. Region, chi phí transfer/replication, Object Lock mode, AWS Backup retention, quota và DBA/Finance approval vẫn là go-live gates.

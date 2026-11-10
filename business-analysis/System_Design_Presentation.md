@@ -18,7 +18,7 @@ Vì vậy, đề tài xây dựng một **nền tảng bán vé concert trực t
 |---|---|---|
 | Quy mô | Hỗ trợ mục tiêu 2 triệu tài khoản; kịch bản kiểm thử/release baseline 100.000 CCU; tối đa 5.000 người đồng thời ở khu chọn ghế | Tách lượng người truy cập lớn khỏi lượng phiên giao dịch cần xử lý đồng thời |
 | Công bằng | Phòng chờ mở trước giờ bán 15 phút; xáo trộn nhóm có mặt tại T0; người đến sau nối hàng FIFO; mục tiêu khiếu nại về công bằng dưới 1% | Hạn chế lợi thế từ bot/F5 và quy định cách nhận lượt rõ ràng |
-| Tính đúng đắn | Mục tiêu không bán trùng ghế; ghế chỉ được xác nhận khi giao dịch hợp lệ; hold tối đa 4 ghế trong **600 giây (10 phút)** | Bảo vệ số lượng ghế hữu hạn và tránh phát hành vé khi chưa đủ điều kiện |
+| Tính đúng đắn | Mục tiêu không bán trùng ghế; ghế chỉ được xác nhận khi giao dịch hợp lệ; hold tối đa 4 ghế trong **300 giây (5 phút)** | Bảo vệ số lượng ghế hữu hạn và tránh phát hành vé khi chưa đủ điều kiện |
 | Khả dụng | SLO mục tiêu 99,95%/tháng cho các purchase API quan trọng do hệ thống trực tiếp vận hành; lỗi của cổng thanh toán được đo riêng | Nêu đúng ranh giới trách nhiệm của nền tảng và nhà cung cấp |
 | Vé và kiểm soát vào cửa | Phát hành QR điện tử có chữ ký; check-in xác thực trực tuyến, fail-closed khi không kiểm chứng được | Hạn chế vé giả và ngăn một vé được chấp nhận nhiều lần |
 | Vận hành và kinh doanh | Cung cấp công cụ duyệt concert, quản lý sự kiện, dashboard, báo cáo, đối soát và hồ sơ quyết toán | Giúp Organizer và đội vận hành quản lý sự kiện qua một quy trình có audit |
@@ -32,7 +32,7 @@ Các con số trên là **mục tiêu/giả định của BA**, không phải k�
 | Giai đoạn | Chức năng |
 |---|---|
 | Khám phá và tài khoản | Đăng ký/đăng nhập; tìm kiếm, lọc và xem concert công khai |
-| Chờ và mua vé | Waiting Room từ T−15 phút; shuffle nhóm có mặt tại T0, FIFO cho người đến sau; admission tối đa 5.000 người chọn ghế; hiển thị sơ đồ ghế; giữ tối đa 4 ghế trong 600 giây |
+| Chờ và mua vé | Waiting Room từ T−15 phút; shuffle nhóm có mặt tại T0, FIFO có ước tính thời gian chờ động cho người đến sau; admission tối đa 5.000 người chọn ghế; hiển thị sơ đồ ghế; giữ tối đa 4 ghế trong 300 giây (5 phút); thu thập thông tin người sử dụng vé (Attendee Information) |
 | Thanh toán và vé | Tạo order, thanh toán qua VNPay/MoMo, xác minh callback, chống xử lý lặp, đối soát trạng thái chưa rõ; phát hành vé QR sau khi thỏa điều kiện thanh toán |
 | Vận hành sự kiện | Organizer tạo concert, sơ đồ và giá vé; Admin duyệt, giám sát hoặc xử lý hủy; Staff được phân công cổng để check-in trực tuyến |
 | Sau bán và sau sự kiện | Xem lịch sử đơn; yêu cầu hủy/hoàn theo chính sách; gửi thông báo; đánh giá sau khi tham dự; báo cáo doanh thu/check-in và quy trình đối soát, phê duyệt hồ sơ quyết toán |
@@ -68,11 +68,11 @@ VNPay, MoMo, dịch vụ email/push/SMS, nhà cung cấp OAuth và CDN/WAF là *
 | Bảo mật và cô lập dữ liệu | Dữ liệu đơn/vé cá nhân, quyền Organizer và quyền Staff có phạm vi khác nhau | Kiểm tra ownership/tenant/gate tại server; chống IDOR; xác minh webhook; giới hạn quyền và lưu audit log |
 | Năng lực thực tế chưa thể suy ra chỉ từ CCU | Cùng CCU nhưng hành vi polling, kích thước payload và số thao tác ghi khác nhau sẽ tạo tải khác nhau | Ghi rõ giả định; benchmark production-like cho Redis, SQL Server, gateway, payment callbacks và check-in trước go-live |
 
-~~~mermaid
+```mermaid
 flowchart LR
   surge["Đỉnh 100.000 CCU"] --> admission["Waiting Room / Admission<br/>tối đa 5.000 selector"]
   admission --> fairness["Shuffle nhóm trước T0<br/>FIFO người đến sau"]
-  admission --> seat["Chọn ghế và hold<br/>600 giây"]
+  admission --> seat["Chọn ghế và hold<br/>300 giây (5 phút)"]
   seat --> integrity["Redis lock + SQL transaction<br/>chống bán trùng"]
   integrity --> payment["VNPay / MoMo<br/>callback idempotent + reconcile"]
   payment --> ticket["Phát hành QR sau khi<br/>đơn đủ điều kiện"]
@@ -80,7 +80,7 @@ flowchart LR
   ops["Outbox / Worker / Audit"] -.-> payment
   ops -.-> ticket
   ops -.-> gate
-~~~
+```
 
 ### Sơ đồ tổng quan hệ thống
 
@@ -94,9 +94,9 @@ flowchart LR
 | Xử lý bất đồng bộ | SQL outbox + Amazon MQ for RabbitMQ | Phát lại event, retry/DLQ và chuyển việc cho Worker |
 | Tích hợp | VNPay/MoMo, Email/Push/SMS, Object Storage | Thanh toán, gửi thông báo và lưu tài nguyên/tệp |
 
-**Luồng người mua ở mức khái quát:** người dùng vào queue → được admission → chọn ghế → giữ ghế 10 phút → checkout và thanh toán → callback hợp lệ xác nhận order → phát hành vé QR → check-in trực tuyến. Payment UNKNOWN hoặc đến sau hạn giữ chỗ đi theo luồng đối soát/hoàn tiền; không tự động cấp vé.
+**Luồng người mua ở mức khái quát:** người dùng vào queue (nhận vị trí và thời gian chờ ước tính) → được admission → chọn ghế → giữ ghế 5 phút → điền thông tin người sử dụng vé (khi mua nhiều vé) → checkout và thanh toán → Primary COMMIT và Synchronous Secondary ACK → callback hợp lệ xác nhận order → phát hành vé QR → check-in trực tuyến. Payment UNKNOWN hoặc đến sau hạn giữ chỗ đi theo luồng đối soát/hoàn tiền; không tự động cấp vé.
 
-~~~mermaid
+```mermaid
 flowchart LR
   subgraph ACTORS["Người dùng"]
     customer["Khách hàng"]
@@ -125,7 +125,7 @@ flowchart LR
   worker --> sql
   worker --> notify
   edge -.-> object
-~~~
+```
 
 ### Cách dẫn nhập khi thuyết trình
 
@@ -174,8 +174,8 @@ Chương này chuyển các mục tiêu của Concert Ticketing System thành y�
 | Độ trễ | Mục tiêu P95: queue status < 60 ms; seat map < 120 ms; hold < 180 ms; checkout < 300 ms; check-in < 220 ms | Đây là latency targets tại API, phải xác nhận bằng benchmark |
 | Khả dụng | SLO 99,95%/tháng cho critical first-party purchase APIs; sự cố VNPay/MoMo được đo riêng | Không coi đây là SLA hợp đồng hoặc kết quả đã đạt |
 | Tính toàn vẹn ghế | Mục tiêu zero double-booking; chỉ một người có thể sở hữu hold hợp lệ hoặc mua một ghế | Redis owner-token lock là lớp nhanh; SQL Server conditional update/transaction là thẩm quyền cuối |
-| Thời hạn giữ ghế | 600 giây từ lần giữ đầu tiên; tối đa 4 ghế mỗi đơn; không gia hạn khi thêm ghế, checkout hoặc heartbeat | Deadline được lưu bền vững; tác vụ nền kiểm tra và giải phóng ghế hết hạn |
-| Thời hạn queue | Queue token hết hiệu lực sau 120 giây không có hoạt động hợp lệ; heartbeat foreground theo quy tắc BA | Hết queue token giải phóng admission slot; không tự rút ngắn hold 600 giây đã tạo |
+| Thời hạn giữ ghế | 300 giây (5 phút) từ lần giữ đầu tiên; tối đa 4 ghế mỗi đơn; không gia hạn khi thêm ghế, checkout hoặc heartbeat | Deadline được lưu bền vững; tác vụ nền kiểm tra và giải phóng ghế hết hạn |
+| Thời hạn queue | Queue token hết hiệu lực sau 120 giây không có hoạt động hợp lệ; heartbeat foreground theo quy tắc BA | Hết queue token giải phóng admission slot; không tự rút ngắn hold 300 giây đã tạo |
 | Thanh toán | Xác minh chữ ký, mã giao dịch, đơn và số tiền; xử lý lặp theo idempotency; trạng thái UNKNOWN phải đối soát | Không retry thu tiền mù khi chưa biết kết quả phía provider |
 | Thanh toán đến trễ | Nếu provider đã capture nhưng hold/order không còn đủ điều kiện, ghi SUCCESS_UNFULFILLED | Không hồi sinh order/hold, không phát vé; hoàn số tiền thực thu sau khi xác minh capture |
 | Check-in | Online-only và fail-closed khi không xác thực được với server | QR hợp lệ một mình không thay thế việc kiểm tra trạng thái ticket trên server |
@@ -188,7 +188,7 @@ Chương này chuyển các mục tiêu của Concert Ticketing System thành y�
 1. Chỉ Customer đã đăng nhập mới được tham gia queue, xem sơ đồ ghế chi tiết, giữ ghế và tạo đơn.
 2. Một Customer chỉ có một lượt queue cho một concert; người vào trước T0 thuộc nhóm được shuffle tại T0, người vào sau nối vào cuối theo FIFO.
 3. Queue access token chỉ cho phép truy cập khu chọn ghế; token không phải vé và không đặt trước ghế.
-4. Hold group có deadline cố định 600 giây từ lần giữ đầu tiên. Tạo order không khởi động lại đồng hồ này.
+4. Hold group có deadline cố định 300 giây (5 phút) từ lần giữ đầu tiên. Tạo order không khởi động lại đồng hồ này. Khi mua nhiều vé, bắt buộc nhập thông tin từng người sử dụng vé (Attendee Information).
 5. Mọi ghế trong một đơn phải được claim thành công trong cùng quy trình giao dịch trước khi order chuyển PAID.
 6. Chỉ callback/webhook hoặc reconciliation hợp lệ mới là căn cứ cập nhật kết quả thanh toán; trang return của trình duyệt chỉ phục vụ hiển thị.
 7. Ticket được phát hành sau khi order chuyển PAID hợp lệ. QR phải được xác thực và ticket phải còn trạng thái ORDERED khi check-in.
@@ -217,7 +217,7 @@ Các phân hệ nghiệp vụ được tổ chức trong Spring Boot Modular Mon
 
 Sơ đồ thể hiện các Actor và nhóm chức năng. Guest chỉ tra cứu sự kiện công khai; thao tác mua vé cần đăng nhập. Organizer chỉ quản lý dữ liệu thuộc tổ chức của mình; Staff chỉ check-in concert/gate được phân công.
 
-~~~mermaid
+```mermaid
 flowchart LR
   guest["Khách vãng lai"]
   customer["Khách hàng"]
@@ -263,13 +263,13 @@ flowchart LR
   provider <--> refund
   notifications --> notifyProvider
   notifications --> customer
-~~~
+```
 
 #### 2.3.2. Sơ đồ tuần tự: từ phòng chờ đến phát hành vé
 
 Sơ đồ khái quát các module nghiệp vụ trong cùng ứng dụng lõi, đồng thời thể hiện các thành phần lưu trữ và xử lý bất đồng bộ.
 
-~~~mermaid
+```mermaid
 sequenceDiagram
   actor C as Customer
   participant EDGE as CloudFront + AWS WAF + ALB
@@ -292,7 +292,7 @@ sequenceDiagram
 
   C->>EDGE: GET seat map với JWT và queue token
   EDGE->>APP: Chuyển request đã qua gateway
-  APP->>R: Xác minh owner-token lock cho seat, TTL 600 giây
+  APP->>R: Xác minh owner-token lock cho seat, TTL 300 giây (5 phút)
   APP->>DB: Conditional update AVAILABLE → HELD, ghi deadline cố định
   DB-->>APP: Kết quả giữ ghế
   APP-->>C: Hold thành công hoặc 409 Conflict
@@ -308,12 +308,13 @@ sequenceDiagram
   APP->>APP: Xác thực chữ ký, mã giao dịch, amount và idempotency
 
   alt Callback hợp lệ; order và toàn bộ hold còn hiệu lực
-    APP->>DB: Transaction xác nhận payment, order PAID, ghế SOLD, ghi outbox
+    APP->>DB: Atomic Transaction: payment SUCCESS, order PAID, ghế SOLD, tickets (với attendee info), ghi payment_idempotency_log & outbox
+    Note over DB: Primary COMMIT và Synchronous Secondary ACK hoàn tất
     DB-->>APP: Commit thành công
+    APP-->>PG: Trả lời 200 OK cho Gateway
     APP->>MQ: Outbox publisher phát OrderPaidEvent
     MQ->>W: Worker nhận event idempotent
-    W->>DB: Tạo ticket và ghi audit
-    W-->>C: Vé điện tử sẵn sàng
+    W-->>C: Vé điện tử sẵn sàng (in tên người dùng vé)
   else Đã thu tiền nhưng hold/order đã hết hạn hoặc không claim đủ ghế
     APP->>DB: Ghi SUCCESS_UNFULFILLED; không phát ticket
     APP->>MQ: Tạo tác vụ reconciliation/refund sau xác minh capture
@@ -321,26 +322,26 @@ sequenceDiagram
     APP->>DB: Ghi UNKNOWN và đưa vào reconciliation
     Note over APP,PG: Không khởi tạo lần thu tiền khác theo kiểu retry mù
   end
-~~~
+```
 
 #### 2.3.3. Sơ đồ trạng thái ghế
 
-~~~mermaid
+```mermaid
 stateDiagram-v2
   [*] --> AVAILABLE
   AVAILABLE --> HELD: Customer có JWT và queue token hợp lệ; Redis lock thành công
-  HELD --> AVAILABLE: Chủ ghế release, order hủy hoặc hết deadline 600 giây
+  HELD --> AVAILABLE: Chủ ghế release, order hủy hoặc hết deadline 300 giây (5 phút)
   HELD --> SOLD: Thanh toán hợp lệ; tất cả ghế được claim trong transaction
   AVAILABLE --> BLOCKED: Organizer/Admin khóa theo quyền và điều kiện concert
   BLOCKED --> AVAILABLE: Được mở khóa theo quyền
   SOLD --> AVAILABLE: Refund được chấp thuận khi concert còn ON_SALE, theo BR
-~~~
+```
 
 **Điều kiện quan trọng:** Redis TTL giúp khóa nhanh, nhưng thời điểm hết hạn có thẩm quyền được kiểm tra từ deadline đã lưu trong SQL Server. Redis keyspace notification chỉ là tín hiệu đánh thức, không phải nguồn bảo đảm duy nhất. Việc mở lại ghế sau refund phụ thuộc quy tắc nghiệp vụ; hủy concert không tự động mở lại ghế đã bán.
 
 #### 2.3.4. Sơ đồ trạng thái order và payment
 
-~~~mermaid
+```mermaid
 stateDiagram-v2
   [*] --> PENDING
   PENDING --> PAID: Callback hợp lệ và hold còn hạn
@@ -350,9 +351,9 @@ stateDiagram-v2
   REFUND_PENDING --> REFUNDED: Provider xác nhận hoàn thành
   REFUND_PENDING --> REFUND_FAILED: Provider xác nhận lỗi / hết retry
   REFUND_FAILED --> REFUND_PENDING: Retry hoặc xử lý thủ công được duyệt
-~~~
+```
 
-~~~mermaid
+```mermaid
 stateDiagram-v2
   [*] --> INITIATED
   INITIATED --> PROCESSING: Giao dịch được khởi tạo
@@ -364,13 +365,13 @@ stateDiagram-v2
   UNKNOWN --> FAILED: Reconciliation xác nhận chưa thu tiền
   UNKNOWN --> SUCCESS_UNFULFILLED: Đã thu nhưng không thể fulfillment
   SUCCESS --> SUCCESS_UNFULFILLED: Callback đến sau hạn hold / order OUT_TIME
-~~~
+```
 
 Order và payment là hai state machine riêng. Payment UNKNOWN chưa phải FAILED; cần reconciliation. SUCCESS_UNFULFILLED ghi nhận tiền đã capture nhưng không đủ điều kiện cấp vé, nên không được làm order quay lại PENDING hay phát ticket.
 
 #### 2.3.5. Sơ đồ trạng thái vé
 
-~~~mermaid
+```mermaid
 stateDiagram-v2
   [*] --> ORDERED: Order PAID và ticket được tạo
   ORDERED --> CHECKED: QR hợp lệ, đúng thời gian và Staff được phân công
@@ -379,7 +380,7 @@ stateDiagram-v2
   CHECKED --> [*]
   CANCELLED --> [*]
   EXPIRED_UNATTENDED --> [*]
-~~~
+```
 
 Vé CHECKED không thể check-in lần nữa. QR bị hủy phải bị từ chối ngay cả khi token chưa hết hạn.
 
@@ -387,7 +388,7 @@ Vé CHECKED không thể check-in lần nữa. QR bị hủy phải bị từ ch
 
 Sơ đồ thể hiện các thành phần chính theo kiến trúc baseline; các module nghiệp vụ nằm trong Modular Monolith, Worker có thể mở rộng độc lập.
 
-~~~mermaid
+```mermaid
 flowchart LR
   subgraph CLIENTS["Kênh người dùng"]
     web["Web Customer"]
@@ -458,7 +459,7 @@ flowchart LR
   notify --> msg
   gateway -.-> object
   sql --> ha
-~~~
+```
 
 ### 2.4. Các luồng nghiệp vụ chính
 
@@ -473,7 +474,7 @@ flowchart LR
 7. Khi token admission hết hạn, slot được thu hồi và cấp cho người tiếp theo. Nếu Customer tham gia lại queue thì nhận vị trí mới ở cuối hàng.
 8. Queue đóng khi concert hết vé hoặc Admin đóng bán.
 
-~~~mermaid
+```mermaid
 flowchart TD
   start["T-15: Mở phòng chờ"] --> auth{"Customer đã đăng nhập?"}
   auth -->|Chưa| login["Yêu cầu đăng nhập"]
@@ -496,9 +497,9 @@ flowchart TD
   release --> next["Mời người kế tiếp"]
   active --> soldout{"Hết vé hoặc Admin đóng?"}
   soldout -->|Có| close["Đóng queue và thông báo"]
-~~~
+```
 
-**Phân biệt hai bộ đếm:** 120 giây là thời hạn hoạt động của quyền admission; 600 giây là deadline của ghế đã hold. Thu hồi queue token không tự xóa hoặc rút ngắn hold đang còn hiệu lực.
+**Phân biệt hai bộ đếm:** 120 giây là thời hạn hoạt động của quyền admission; 300 giây (5 phút) là deadline của ghế đã hold. Thu hồi queue token không tự xóa hoặc rút ngắn hold đang còn hiệu lực.
 
 #### 2.4.2. Chọn ghế và giữ ghế
 
@@ -506,12 +507,12 @@ flowchart TD
 2. API kiểm tra concert đang mở bán, số ghế yêu cầu không vượt quá 4, và từng ghế còn AVAILABLE.
 3. Redis tạo owner-token lock nguyên tử cho từng ghế; chỉ chủ lock mới được giải phóng lock.
 4. SQL Server thực hiện conditional update trong transaction. Nếu một ghế không còn AVAILABLE hoặc version không khớp, thao tác thất bại và API trả Conflict; không tạo hold một phần cho đơn.
-5. Khi thành công, hệ thống lưu thời điểm bắt đầu và deadline cố định của hold group là lần giữ đầu tiên + 600 giây.
+5. Khi thành công, hệ thống lưu thời điểm bắt đầu và deadline cố định của hold group là lần giữ đầu tiên + 300 giây (5 phút). Khi mua nhiều vé, bắt buộc nhập thông tin từng người sử dụng vé (Attendee Information) trước khi checkout.
 6. Thêm ghế vào hold group, checkout hoặc heartbeat không gia hạn deadline.
 7. Khi Customer tự bỏ ghế, hủy order hoặc hold hết hạn, hệ thống giải phóng đúng ghế do Customer sở hữu và phát cập nhật sơ đồ.
 8. Scheduler/reconciler kiểm tra deadline trong SQL Server để giải phóng ghế; Redis TTL hỗ trợ khóa ngắn hạn nhưng không thay thế kiểm tra bền vững.
 
-~~~mermaid
+```mermaid
 flowchart TD
   request["Yêu cầu hold 1–4 ghế"] --> valid{"JWT và queue token hợp lệ?"}
   valid -->|Không| rejectAuth["Từ chối 401/403"]
@@ -524,12 +525,12 @@ flowchart TD
   lockOk -->|Có| sql["SQL conditional update trong transaction"]
   sql --> sqlOk{"Update đủ tất cả ghế?"}
   sqlOk -->|Không| cleanup
-  sqlOk -->|Có| deadline["Lưu hold_started_at và expires_at = lần giữ đầu + 600 giây"]
+  sqlOk -->|Có| deadline["Lưu hold_started_at và expires_at = lần giữ đầu + 300 giây"]
   deadline --> success["Trả hold thành công và countdown"]
   success --> expiry{"Đến deadline hoặc Customer hủy?"}
   expiry -->|Chưa| payment["Checkout dùng deadline còn lại"]
   expiry -->|Rồi / hủy| release["Giải phóng ghế đúng owner; broadcast seat update"]
-~~~
+```
 
 #### 2.4.3. Tạo đơn và thanh toán VNPay/MoMo
 
@@ -542,7 +543,7 @@ flowchart TD
 7. Nếu thanh toán hợp lệ đến khi order/hold vẫn còn hiệu lực và toàn bộ ghế được claim trong transaction, cập nhật payment SUCCESS, order PAID và ghế SOLD; ghi outbox event.
 8. Nếu tiền đã được capture nhưng hold hết hạn/order OUT_TIME hoặc không thể claim đủ ghế, ghi SUCCESS_UNFULFILLED; không hồi sinh order, không phát ticket. Chỉ tạo refund sau khi xác minh capture.
 
-~~~mermaid
+```mermaid
 flowchart TD
   create["Order PENDING từ hold còn hiệu lực"] --> initiate["Khởi tạo VNPay hoặc MoMo"]
   initiate --> provider["Khách thanh toán tại provider"]
@@ -559,7 +560,7 @@ flowchart TD
   outbox --> issue["Worker phát hành ticket idempotent"]
   deadline -->|Không| unfulfilled["SUCCESS_UNFULFILLED; không tạo ticket"]
   unfulfilled --> refund["Xác minh capture rồi hoàn 100% số tiền thực thu"]
-~~~
+```
 
 #### 2.4.4. Phát hành vé và check-in
 
@@ -571,7 +572,7 @@ flowchart TD
 6. Nếu ticket đã CHECKED, CANCELLED, hết hạn QR hoặc Staff không đúng phạm vi, hệ thống từ chối và trả lý do.
 7. Nếu không kết nối được server để xác thực, scanner fail-closed: không đánh dấu CHECKED và không hiển thị kết quả hợp lệ.
 
-~~~mermaid
+```mermaid
 flowchart TD
   paid["Order PAID"] --> issue["Tạo ticket theo từng ghế"]
   issue --> qr["Cấp QR ký số; token ngắn hạn"]
@@ -583,7 +584,7 @@ flowchart TD
   valid -->|Không| reject["Từ chối: giả mạo / hết hạn / đã dùng / đã hủy"]
   valid -->|Có| commit["Transaction: ORDERED → CHECKED và ghi audit"]
   commit --> accepted["Xác nhận hợp lệ cho Staff"]
-~~~
+```
 
 **Lưu ý khi thuyết trình:** hệ thống không coi trang thanh toán trả về trình duyệt là bằng chứng cuối cùng. Callback có chữ ký hợp lệ và trạng thái lưu trong SQL Server mới quyết định việc chuyển order sang PAID và phát hành vé.
 ## 3. Ước lượng Quy mô & Tài nguyên (Capacity Estimation)
@@ -602,7 +603,7 @@ Mục tiêu của phần này là trả lời bốn câu hỏi: **cần chịu b
 | Sơ đồ ghế | 5.000 người hỏi mỗi 5 giây | Dùng tính request đọc sơ đồ |
 | Vé trung bình mỗi đơn | 3,2 vé; tối đa 4 vé | 3,2 là giả định dự báo; 4 là giới hạn nghiệp vụ |
 | Thời gian bán hết | 15–20 phút | Dùng tính tốc độ tạo đơn |
-| Thời hạn giữ ghế | 600 giây (10 phút) | Thời hạn cố định sau lần giữ đầu tiên |
+| Thời hạn giữ ghế | 300 giây (5 phút) | Thời hạn cố định sau lần giữ đầu tiên |
 | Queue token không hoạt động | 120 giây | Hết hạn admission; không rút ngắn hold ghế |
 | Kích thước trang tĩnh nén | 800 KB | Payload giả định cho một lượt tải trang |
 | Lượt tải trang cao điểm | 10.000 lượt/giây | Giả định riêng, không suy ra trực tiếp từ CCU |
@@ -728,7 +729,7 @@ Theo bảng dự báo BA, ảnh đại diện, poster, sơ đồ ghế, PDF vé 
 ### 4.1 Kiến trúc baseline trên AWS
 **Spring Boot 3 Modular Monolith** scale ngang, module nghiệp vụ cùng ranh giới ứng dụng/transaction; Worker là process riêng cho tác vụ nền. Amazon MQ for RabbitMQ là broker managed theo D-035. SQL Server là source of truth cho giao dịch/audit. Amazon ElastiCache for Redis OSS giữ cache và trạng thái ngắn hạn, không thay SQL. Mô hình này giữ ACID cho booking/order/payment và tránh độ phức tạp microservices ở giai đoạn hiện tại.
 
-~~~mermaid
+```mermaid
 flowchart TB
   subgraph CLIENT["Client"]
     web["Web"]
@@ -748,7 +749,7 @@ flowchart TB
     notify["Notification producer"]
     reports["Review / Reporting"]
   end
-  redis[("Redis: queue 120s, lock 600s, cache")]
+  redis[("Redis: queue 120s, lock 300s, cache")]
   sqlp[("SQL Server Primary")]
   sqls[("Readable synchronous secondary")]
   outbox["Transactional Outbox"]
@@ -783,11 +784,11 @@ flowchart TB
   mq --> worker
   worker --> sqlp
   worker --> channels
-~~~
+```
 
 Catalog có thể dùng cache/secondary khi consistency cho phép. Hold, order, payment và check-in ghi Primary. Business change và outbox commit cùng transaction; publisher gửi sang Amazon MQ for RabbitMQ; Worker xử lý idempotent.
 
-~~~mermaid
+```mermaid
 sequenceDiagram
   actor U as Khách hàng
   participant API as Modular Monolith
@@ -814,7 +815,7 @@ sequenceDiagram
     API->>DB: SUCCESS_UNFULFILLED, không phát vé
     Note over API,W: Sau xác minh capture thì refund 100%
   end
-~~~
+```
 
 ---
 
@@ -823,7 +824,7 @@ sequenceDiagram
 ### 5.1 ERD logic
 BA có 20 bảng nghiệp vụ và 1 transactional outbox. ERD dưới đây nhấn vào quan hệ chính; xem ERD BA để biết đầy đủ thuộc tính, khóa và constraint. Đây là mô hình logic, không phải DDL.
 
-~~~mermaid
+```mermaid
 erDiagram
   USERS ||--|| USER_CREDENTIALS : credentials
   USERS ||--o{ USER_SESSIONS : sessions
@@ -844,25 +845,25 @@ erDiagram
   TICKETS ||--o| REVIEWS : verifies
   CONCERTS ||--o{ ORGANIZER_SETTLEMENTS : settlement
   ORGANIZER_SETTLEMENTS ||--o{ SETTLEMENT_ENTRIES : ledger
-~~~
+```
 
 Outbox ghi cùng transaction. Payment attempts, refunds và settlement entries truy ngược về order/provider reference để reconcile.
 
 ### 5.2 State machine
 Seat: AVAILABLE → HELD → SOLD. HELD về AVAILABLE khi chủ bỏ chọn hoặc hết hạn. SOLD chỉ mở lại theo refund hợp lệ khi concert còn ON_SALE; hủy concert không mở ghế bán lại.
 
-~~~mermaid
+```mermaid
 stateDiagram-v2
   [*] --> AVAILABLE
-  AVAILABLE --> HELD: Queue token hợp lệ + Redis NX EX 600 + SQL conditional update
+  AVAILABLE --> HELD: Queue token hợp lệ + Redis NX EX 300 + SQL conditional update
   HELD --> AVAILABLE: Chủ bỏ / hold hoặc order hết hạn
   HELD --> SOLD: Callback hợp lệ, đúng tiền, còn hạn
   SOLD --> AVAILABLE: Refund hợp lệ, concert còn ON_SALE
-~~~
+```
 
 Order/payment là state riêng; UNKNOWN không đồng nghĩa FAILED.
 
-~~~mermaid
+```mermaid
 stateDiagram-v2
   [*] --> PENDING
   PENDING --> PAID: Callback hợp lệ, đúng amount, trước expiry
@@ -872,7 +873,7 @@ stateDiagram-v2
   REFUND_PENDING --> REFUNDED: Provider xác nhận
   REFUND_PENDING --> REFUND_FAILED: Provider từ chối/hết retry
   REFUND_FAILED --> REFUND_PENDING: Retry sau lỗi xác định
-~~~
+```
 
 ### 5.3 API cốt lõi
 
@@ -895,23 +896,23 @@ Base path là `/api/v1`. API giao dịch bypass CDN cache; Idempotency-Key ngăn
 ## 6. Đi sâu Giải quyết Bài toán Khó (Deep Dive / Core Bottlenecks)
 
 ### 6.1 Chống giữ trùng
-API xác thực user, queue token, giới hạn và idempotency; Redis acquire atomic lock với owner và TTL 600; SQL transaction conditional-update ghế chỉ khi AVAILABLE/version khớp; chỉ commit SQL xong mới báo thành công. SQL lỗi thì chỉ release Redis khi owner token vẫn khớp. Reconciler lấy expiry từ SQL. Khi DB không thể xác minh thì fail-closed.
+API xác thực user, queue token, giới hạn và idempotency; Redis acquire atomic lock với owner và TTL 300 (5 phút); SQL transaction conditional-update ghế chỉ khi AVAILABLE/version khớp; chỉ commit SQL và đồng bộ Secondary xong mới báo thành công. SQL lỗi thì chỉ release Redis khi owner token vẫn khớp. Reconciler lấy expiry từ SQL. Khi DB không thể xác minh thì fail-closed.
 
-~~~mermaid
+```mermaid
 flowchart TD
   req["Hold request"] --> valid{"Auth/token/limit <= 4?<br/>request hợp lệ?"}
   valid -->|No| reject["Từ chối"]
-  valid -->|Yes| lock{"Redis NX lock TTL 600?"}
+  valid -->|Yes| lock{"Redis NX lock TTL 300?"}
   lock -->|No| conflict["409 ghế đã giữ"]
   lock -->|Yes| sql{"SQL conditional update"}
   sql -->|Commit| ok["HELD, trả thành công"]
   ok --> event["Outbox phát seat event"]
   sql -->|Fail/0 row| release["Release đúng owner token"]
   sql -->|Trạng thái không rõ| closed["Fail-closed"]
-~~~
+```
 
 ### 6.2 Queue và payment failure
-Admission token 120 giây độc lập với seat hold 600 giây. Adaptive polling/jitter giảm đỉnh nhưng không thay load testing. UNKNOWN reconcile ở 30 giây, 5 phút, 30 phút; chỉ retry khi failure xác định, tối đa 3 lần với backoff 1/5/30 phút. Capture sau expiry không cấp vé, hoàn đủ sau xác nhận.
+Admission token 120 giây độc lập với seat hold 300 giây (5 phút). Hàng chờ FIFO có tính toán và hiển thị thời gian chờ động theo throughput thực tế. Adaptive polling/jitter giảm đỉnh nhưng không thay load testing. UNKNOWN reconcile ở 30 giây, 5 phút, 30 phút; chỉ retry khi failure xác định, tối đa 3 lần với backoff 1/5/30 phút. Capture sau expiry không cấp vé, hoàn đủ sau xác nhận. IPN webhook xử lý idempotent và ghi nhận Primary COMMIT + Synchronous Secondary ACK trước khi phản hồi client.
 
 ### 6.3 QR và settlement
 QR token xoay mỗi 30 giây, sống tối đa 60 giây; server chuyển ticket sang CHECKED atomically. Không có offline acceptance theo baseline. Hủy concert hoàn đủ cho order PAID, kể cả CHECKED, giữ audit và không mở lại ghế. Settlement chỉ gồm payment/refund đã xác nhận và chờ reconcile/Finance approval.

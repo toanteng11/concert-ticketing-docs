@@ -6,13 +6,13 @@ Tài liệu này đặc tả kiến trúc tổng thể cấp cao (**High-Level S
 
 Tài liệu cung cấp toàn bộ các thành phần, các lớp kiến trúc (Architectural Layers), biên giới mạng, cơ chế tiếp nhận lưu lượng và đường đi của dữ liệu qua từng tầng để làm cơ sở cho kỹ sư hệ thống vẽ sơ đồ kiến trúc tổng thể (**High-Level Architecture Diagram**) và sơ đồ luồng dữ liệu (**Data Flow Diagram**).
 
-> **Ghi chú kiến trúc:** Backend được tổ chức theo mô hình **Modular Monolith** (Spring Boot 3) — nhưng bổ sung **RabbitMQ message broker** và **Worker Service** độc lập để xử lý các tác vụ bất đồng bộ nặng (gửi email, hoàn tiền tự động, hủy đơn trễ). Đây là mô hình **Hybrid: Modular Monolith + Lightweight Async Workers**.
+> **Ghi chú kiến trúc:** Backend được tổ chức theo mô hình **Modular Monolith** (Spring Boot 3) — nhưng bổ sung **Amazon MQ for RabbitMQ message broker** và **Worker Service** độc lập để xử lý các tác vụ bất đồng bộ nặng (gửi email, hoàn tiền tự động, hủy đơn trễ). Đây là mô hình **Hybrid: Modular Monolith + Lightweight Async Workers**.
 
 ---
 
 ## 2. Phân Tầng Kiến Trúc Hệ Thống (Layered Architecture Breakdown)
 
-> **Kiến trúc mục tiêu theo sơ đồ:** Modular Monolith Spring Boot scale ngang; Write API/Read API tách theo luồng; HikariCP write pool tới SQL Server Primary và read-intent pool tới readable synchronous secondary trong Always On AG theo D-026; Redis giữ queue access token tối đa 120 giây, seat hold 600 giây và cache TTL theo data class; RabbitMQ theo D-025 cùng worker; SQL Server là nguồn sự thật cho audit/outbox, không có NoSQL theo D-029. Read-your-write đi Primary tối đa 5 giây; cache TTL không thay thế định tuyến nhất quán. Check-in online-only, fail-closed theo D-023.
+> **Kiến trúc mục tiêu theo sơ đồ:** Modular Monolith Spring Boot scale ngang; Write API/Read API tách theo luồng; HikariCP write pool tới SQL Server Primary và read-intent pool tới readable synchronous secondary trong Always On AG theo D-026; Redis giữ queue access token tối đa 120 giây, seat hold 600 giây và cache TTL theo data class; Amazon MQ for RabbitMQ theo D-025/D-035 cùng worker; SQL Server là nguồn sự thật cho audit/outbox, không có NoSQL theo D-029. Read-your-write đi Primary tối đa 5 giây; cache TTL không thay thế định tuyến nhất quán. Check-in online-only, fail-closed theo D-023.
 
 Hệ thống được tổ chức thành **8 tầng kiến trúc** phân tách rõ ràng theo sơ đồ kiến trúc mục tiêu:
 
@@ -27,21 +27,21 @@ flowchart TB
     staff["Staff QR scanner"]
     admin["Admin / Organizer portal"]
   end
-  dns["DNS + CDN<br/>Static assets and public cache"]
-  lb["Load balancer / API Gateway<br/>TLS, routing, rate limits, WebSocket"]
+  dns["Route 53 + CloudFront + AWS WAF<br/>static assets and eligible public cache"]
+  lb["AWS ALB<br/>HTTP/WSS routing to Amazon EKS"]
   subgraph APP["Concert Ticketing System — Spring Boot 3 Modular Monolith, scaled horizontally"]
     read["Read APIs<br/>Catalog, seat map, reports"]
     write["Write APIs<br/>Booking, orders, payments, check-in"]
     producer["Event producers<br/>Notifications, cancellation work"]
   end
-  redis["Redis Cluster<br/>Queue session 120s; seat lock 600s; cache"]
-  sqlw[("SQL Server Primary<br/>Transactional source of truth")]
-  sqlr[("Readable synchronous secondary<br/>Always On AG per D-026")]
-  broker["Message broker<br/>RabbitMQ baseline D-025; retry + DLQ"]
+  redis["Amazon ElastiCache for Redis OSS<br/>Queue 120s; seat lock 600s; cache"]
+  sqlw[("SQL Server Enterprise on EC2<br/>Primary source of truth")]
+  sqlr[("Readable synchronous EC2 secondary<br/>Always On AG per D-026")]
+  broker["Amazon MQ for RabbitMQ<br/>durable queues; retry + DLQ"]
   worker["Separate Worker process<br/>notifications, refunds, timeout jobs"]
-  object["Object Storage<br/>assets and generated files"]
+  object["Amazon S3<br/>assets and generated files; KMS"]
   payments["VNPay / MoMo"]
-  channels["Email / Push / SMS providers"]
+  channels["Amazon SES / SNS Mobile Push / AWS End User Messaging SMS"]
   web --> dns
   mobile --> dns
   staff --> dns
@@ -72,6 +72,20 @@ flowchart TB
 
 ---
 
+### 2.1. Ánh xạ tầng cloud sang AWS
+
+| Lớp | Dịch vụ AWS mục tiêu | Ghi chú |
+|---|---|---|
+| DNS/edge | Route 53, CloudFront, AWS WAF, Shield Standard | API giao dịch no-store; Bot Control/CAPTCHA tùy chọn có phí |
+| Compute | ALB, EKS, EC2 managed node groups, ECR | App/Worker private, nhiều AZ; autoscaling sau benchmark |
+| State/async | ElastiCache Redis OSS, Amazon MQ for RabbitMQ | Redis không là nguồn sự thật; version cần compatibility test |
+| Database | SQL Server Enterprise trên EC2/EBS Always On AG | Giữ readable sync secondary + async DR D-026; license/WSFC là gate |
+| Files/backup | S3, KMS, Versioning/Object Lock/CRR, AWS Backup Vault Lock/Restore Testing | SQL native FULL/DIFF/LOG qua EBS staging + IAM uploader; VSS/EBS bổ sung cho phục hồi máy chủ |
+| CI/CD | CodePipeline V2, CodeBuild, CodeConnections | GitHub là source ngoài AWS; build/test/deploy và artifacts chạy/lưu trên AWS |
+| Observe/security | CloudWatch, X-Ray, CloudTrail, Config, GuardDuty, Security Hub, IAM, Secrets Manager | Logs 30 ngày; workload dùng IAM role |
+| Notification | SES, SNS Mobile Push, AWS End User Messaging SMS | APNs/FCM/carrier là mạng đích ngoài AWS |
+
+Region/AZ, quota, SKU, giá và benchmark chưa chốt; đây là target design, chưa phải triển khai đã nghiệm thu. Không dùng Amazon API Gateway trong baseline: ALB tiếp nhận/định tuyến, còn JWT, RBAC, queue token và nghiệp vụ được kiểm tra trong Spring Boot.
 ## 3. Mô Tả Chi Tiết Từng Tầng
 
 ### Tầng 1: Client & Presentation Layer
@@ -81,15 +95,15 @@ flowchart TB
 - **Admin Management Portal:** Giao diện quản trị tập trung cho Quản trị viên sàn.
 
 ### Tầng 2: DNS & CDN Layer
-- **Cloudflare Anycast DNS:** Phân giải tên miền độ trễ thấp, chuyển hướng thông minh theo vùng địa lý.
-- **Cloudflare / CloudFront CDN:** Cache và phân phối tài nguyên tĩnh (Poster concert, Banner sự kiện, Sơ đồ ghế SVG) tại các PoP Hà Nội / TP.HCM / Đà Nẵng. Tải từ CDN < 20ms.
-- **Kết nối CDN → Object Store (S3/R2):** Pull-through cache — file không có trong Edge thì kéo từ Origin S3.
+- **Amazon Route 53:** DNS authoritative; health/failover policy sau khi duyệt Region, TTL và DR runbook.
+- **Amazon CloudFront:** phân phối bundle, poster, banner và sơ đồ tĩnh; không giả định PoP tại thành phố hoặc độ trễ cố định, cần đo thực tế.
+- **CloudFront → Amazon S3:** Origin Access Control, private bucket và KMS; nội dung riêng tư dùng signed URL/cookie.
 
 ### Tầng 3: Load Balancer Layer
-- **Công nghệ:** Nginx (Docker / Kubernetes Ingress).
+- **Ingress production:** AWS ALB do AWS Load Balancer Controller tạo cho EKS; Nginx chỉ dùng local/dev nếu cần.
 - **Chức năng:**
-  - Phân phối traffic đến nhiều instance Monolith (Round-Robin / Least-Connection).
-  - Rate Limiting sơ cấp tại tầng L4/L7 cho các endpoint nhạy cảm (`/login`, `/orders`, `/seats/hold`).
+- **Chức năng:** ALB target-group routing và health checks; thuật toán/phân phối chọn theo cấu hình hỗ trợ và đo tải, không giả định thuật toán least-connection.
+  - AWS WAF áp dụng rate-based rules phù hợp tại edge; ứng dụng kiểm tra JWT/queue token và giới hạn theo user/concert, dùng ElastiCache khi cần bộ đếm. ALB chỉ định tuyến/health-check, không làm response cache hay thay logic xác thực.
   - Health-check các instance — loại bỏ instance lỗi khỏi pool tự động.
   - Hỗ trợ WebSocket Upgrade (sticky session cho WSS connections).
   - SSL/TLS Termination (forward HTTP nội bộ).
@@ -134,12 +148,12 @@ Một ứng dụng Spring Boot 3 chứa 4 nhóm endpoint phân tách rõ ràng t
 
 ### Tầng 5: Message Queue & Worker Layer
 
-#### 5.1. Message Queue (RabbitMQ)
-- **Công nghệ:** RabbitMQ; durable queues, publisher confirms, retry/DLQ, idempotent consumer; transactional outbox trong SQL Server (D-025/D-029).
+#### 5.1. Message Queue (Amazon MQ for RabbitMQ)
+- **Công nghệ:** Amazon MQ for RabbitMQ; durable queues, publisher confirms, retry/DLQ, idempotent consumer; transactional outbox trong SQL Server (D-025/D-029).
 - **Tính năng quan trọng:**
   - **Retry Policy:** Tự động retry 3 lần với exponential backoff khi Worker xử lý thất bại.
   - **Dead-Letter Queue (DLQ):** Message thất bại sau 3 lần retry → chuyển sang DLQ để team kỹ thuật kiểm tra thủ công.
-- **RabbitMQ exchanges / queues chính:**
+- **Amazon MQ exchanges / queues chính:**
   - `notification.send` — Gửi Email, Push, In-App.
   - `order.cancel` — Hủy đơn hàng timeout.
   - `refund.process` — Hoàn tiền tự động.
@@ -147,7 +161,7 @@ Một ứng dụng Spring Boot 3 chứa 4 nhóm endpoint phân tách rõ ràng t
 #### 5.2. Worker Service (Process riêng biệt)
 - **Công nghệ:** Spring Boot Worker (riêng biệt với Monolith app) hoặc Spring Boot Scheduler.
 - **Vai trò:** Consumer — lắng nghe Queue và xử lý từng message:
-  - **Gửi Email / In-App Notification:** Gọi SendGrid / AWS SES / FCM.
+  - **Gửi Email / Push / SMS / In-App Notification:** Gọi Amazon SES / SNS Mobile Push / AWS End User Messaging SMS (APNs/FCM và carrier là điểm giao nhận bên ngoài AWS).
   - **Xử lý Hoàn Tiền Tự Động:** Gọi VNPay Refund API / MoMo Refund API → cập nhật `refunds` vào SQL Server.
 - **Lý do tách Worker riêng (không dùng @Async trong Monolith):**
   - Worker có thể scale độc lập mà không cần restart toàn bộ Monolith.
@@ -170,9 +184,9 @@ Một ứng dụng Spring Boot 3 chứa 4 nhóm endpoint phân tách rõ ràng t
 Sau thao tác ghi, read-your-write được route về Primary tối đa 5 giây (D-013). Readable secondary, listener routing và HA phụ thuộc edition/topology D-026; read-only annotation không tự route kết nối.
 
 #### 7.1. Audit, transactional outbox và operational logs
-- SQL Server lưu audit_logs và outbox_events; outbox row được ghi cùng transaction nghiệp vụ và publish tới RabbitMQ với publisher confirm.
+- SQL Server lưu audit_logs và outbox_events; outbox row được ghi cùng transaction nghiệp vụ và publish tới Amazon MQ for RabbitMQ với publisher confirm.
 - Redis chỉ lưu queue/lock/cache có TTL; không lưu transaction truth.
-- ELK/OpenSearch lưu operational logs đã lọc PII theo retention NFR; không dùng để đối soát giao dịch.
+- Amazon CloudWatch Logs lưu operational logs đã lọc PII theo retention NFR; không dùng để đối soát giao dịch.
 
 #### 7.2. SQL Server Primary (Ghi dữ liệu giao dịch)
 - **Vai trò:** Primary server — tiếp nhận toàn bộ write operations.
@@ -203,7 +217,7 @@ Các bảng được phân nhóm theo domain trong cùng SQL Server instance:
 | **Concerts & Seats** | `concerts`, `venues`, `ticket_zones`, `seats`, `seat_holds` | Index (`concert_id`, `seat_id`), Index (`concert_id`, `status`) |
 | **Historical tables** | audit_logs, checkin_logs, notifications | index + retention/archive; no partition in baseline (D-028) |
 
-#### 7.5. Object Store (S3 / Cloudflare R2)
+#### 7.5. Amazon S3 Object Storage
 - Lưu: Poster concert, Banner sự kiện, File vé PDF, Sơ đồ ghế gốc SVG.
 - **Signed URL (TTL=15 phút):** Client không truy cập trực tiếp S3 — phải xin URL có chữ ký từ server.
 
@@ -215,25 +229,25 @@ Các bảng được phân nhóm theo domain trong cùng SQL Server instance:
 
 | Giai đoạn | Luồng | Công nghệ |
 |---|---|---|
-| **1. Truy cập** | Client → CDN (< 20ms) | Cloudflare Edge Cache |
-| **2. Phân giải** | Client → DNS → Load Balancer | Cloudflare Anycast + Nginx |
+| **1. Truy cập** | Client → CloudFront edge; độ trễ cần đo | Amazon CloudFront |
+| **2. Phân giải và định tuyến** | Client phân giải DNS qua Route 53 tới CloudFront; CloudFront chuyển request đủ điều kiện tới ALB origin | Route 53 + CloudFront + ALB |
 | **3. Xếp hàng** | Load Balancer → Auth/Queue Module → Redis | ZADD Sorted Set + Queue Token |
 | **4. Xem ghế** | Read API → Redis Cache / readable secondary; Primary trong cửa sổ read-your-write | GET concert:{id} / SELECT seats |
 | **5. Giữ ghế** | Write API → Redis (SETNX) + SQL Server Write | Atomic lock + INSERT seat_holds |
 | **6. Tạo đơn** | Write API → SQL Server Primary (@Transactional) | INSERT orders + order_items |
 | **7. Thanh toán** | Write API ↔ VNPay/MoMo | Redirect + IPN Webhook verify |
 | **8. Xác nhận** | Write API → SQL Server Primary (UPDATE PAID) | UPDATE orders + INSERT tickets |
-| **9. Thông báo** | Write Async → Queue → Worker → Email/Push | RabbitMQ theo D-025 → Worker → SendGrid/FCM |
+| **9. Thông báo** | Write Async → Queue → Worker → Email/Push/SMS | Amazon MQ → Worker → SES/SNS/AWS End User Messaging |
 
 ---
 
 ## 5. Kiến Trúc Tổng Thể Mục Tiêu
 
-Luồng chính: ứng dụng web/di động → CDN/WAF → Load Balancer/API Gateway → Spring Boot Modular Monolith. Gateway chuyển yêu cầu vào các module nội bộ; Redis phục vụ virtual queue, seat lock và cache.
+Luồng chính: ứng dụng web/di động → Route 53 phân giải tới CloudFront/WAF → ALB → Amazon EKS → Spring Boot Modular Monolith. API policy nằm trong ứng dụng; ElastiCache for Redis OSS phục vụ virtual queue, seat lock và cache.
 
 - **Đường ghi:** Write API → HikariCP write pool → SQL Server Primary. SQL Server là nguồn sự thật cho account, seats, orders, payments, tickets và giao dịch ACID.
-- **Đường đọc:** Read API → Redis cache hoặc HikariCP read pool → readable secondary khi topology/edition cho phép. Trong tối đa 5 giây sau thao tác ghi, request cần read-your-write quay về Primary (D-013).
-- **Xử lý bất đồng bộ:** Modular Monolith → RabbitMQ broker (D-025) → Worker riêng để gửi thông báo, xử lý tác vụ hoàn tiền và hủy đơn.
-- **Dữ liệu phụ:** SQL Server outbox/audit là nguồn sự thật; ELK chỉ lưu operational logs (D-029). Object storage giữ poster, tài liệu và tài sản tĩnh.
+- **Đường đọc:** Read API → Amazon ElastiCache for Redis OSS hoặc HikariCP read pool → readable secondary khi topology/edition cho phép. Trong tối đa 5 giây sau thao tác ghi, request cần read-your-write quay về Primary (D-013).
+- **Xử lý bất đồng bộ:** Modular Monolith → Amazon MQ for RabbitMQ (D-025/D-035) → Worker riêng để gửi thông báo, xử lý tác vụ hoàn tiền và hủy đơn.
+- **Dữ liệu phụ:** SQL Server outbox/audit là nguồn sự thật; CloudWatch Logs chỉ lưu operational logs (D-029). Object storage giữ poster, tài liệu và tài sản tĩnh.
 - **Redis TTL:** queue inactivity 120 giây; seat hold chính xác 600 giây (10 phút); cache TTL không được dùng thay read-your-write.
-- **Baseline đã chốt:** SQL Server 2025 Enterprise HA/DR (D-026), RabbitMQ (D-025), không partition/NoSQL (D-028/D-029), online-only check-in (D-023). **Cổng go-live còn phải có bằng chứng:** benchmark 100.000 CCU và DBA/Finance license/sizing sign-off (D-030); các mục này chưa được coi là đã nghiệm thu.
+- **Baseline đã chốt:** SQL Server 2025 Enterprise HA/DR (D-026), Amazon MQ for RabbitMQ (D-025/D-035), không partition/NoSQL (D-028/D-029), online-only check-in (D-023). **Cổng go-live còn phải có bằng chứng:** benchmark 100.000 CCU và DBA/Finance license/sizing sign-off (D-030); các mục này chưa được coi là đã nghiệm thu.

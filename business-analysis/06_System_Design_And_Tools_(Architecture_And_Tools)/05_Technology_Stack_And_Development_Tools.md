@@ -7,11 +7,12 @@ Hệ thống bán vé sự kiện âm nhạc trực tuyến (Concert Ticketing P
 - **Ngôn ngữ phát triển cốt lõi (Core Backend Language):** **Java (Java 17 / Java 21 LTS)** với nền tảng **Spring Boot 3**.
 - **Môi trường soạn thảo mã nguồn (Code Editor / IDE):** **Visual Studio Code (VS Code)** với bộ tiện ích mở rộng Java & Spring Enterprise.
 - **Hệ quản trị cơ sở dữ liệu quan hệ (Primary RDBMS):** Microsoft SQL Server 2025 Enterprise cho production theo D-026; SQL Server 2025 Developer chỉ cho local. License, sizing và HA phải được DBA/Finance xác nhận trước go-live.
+- **Backup & Disaster Recovery:** SQL Server Agent FULL/DIFF/LOG backup qua encrypted EBS staging lên S3 Versioning/SSE-KMS/Object Lock/CRR; AWS Backup Windows VSS/Vault Lock phục hồi EC2/EBS khi OS/instance được hỗ trợ. Lịch và target còn chờ kiểm chứng theo D-036/Q-023.
 - **Công cụ thiết kế giao diện người dùng (UI/UX Design):** **Figma** (Design System, Wireframes & Interactive Prototypes).
 - **Công cụ thiết kế sơ đồ mô hình hóa (UML Modeling):** **Astah (Astah Professional / Astah UML)** để vẽ toàn bộ sơ đồ Use Case, Sequence, State Machine, Class Diagram.
 - **Công cụ kiểm thử & Kiểm chuẩn API (API Testing):** **Postman** (Postman Collections, Pre-request Scripts, Automated Test Assertions).
 - **Quản lý tiến độ dự án & Quy trình Agile (Project Management):** **Jira (Jira Software)** quản lý Sprint, Backlog, User Stories và Bug Tracking.
-- **Quản lý mã nguồn & Phiên bản (Version Control System):** **GitHub** (GitFlow Branching Strategy, Pull Requests, Code Review, GitHub Actions).
+- **Quản lý mã nguồn & Phiên bản (Version Control System):** GitHub (GitFlow, Pull Requests, Code Review); pipeline build/deploy chạy trên AWS CodePipeline và CodeBuild qua AWS CodeConnections.
 - **Đóng gói & Môi trường chứa ứng dụng (Containerization):** **Docker** (Multi-stage Dockerfile, Docker Compose, Docker Desktop).
 
 ---
@@ -24,12 +25,13 @@ Hệ thống bán vé sự kiện âm nhạc trực tuyến (Concert Ticketing P
 | **Framework Backend** | **Spring Boot** | **Spring Boot 3.2+** | Framework tiêu chuẩn doanh nghiệp: Spring Web MVC, Spring Data JPA / Hibernate, Spring Security (JWT / OAuth2), Spring Cloud |
 | **Cơ Sở Dữ Liệu Quan Hệ** | **Microsoft SQL Server 2025 Enterprise** | Production theo D-026; Developer chỉ local | RDBMS giao dịch ACID; transaction amounts là số nguyên VND; production license/sizing cần DBA/Finance sign-off; không partition trong baseline theo D-028 |
 | **Quản Lý Kết Nối Database**| **HikariCP** | Tích hợp sẵn trong Spring Boot | Thư viện Connection Pool tốc độ cao nhất trong hệ sinh thái Java, tách connection pool ghi tới Primary và pool read-intent tới readable secondary khi topology được chọn |
-| **Bộ Nhớ Đệm & Khóa Ghế** | **Redis** | **Redis 7.2+** | Lưu trữ In-Memory: Chạy Lua Script khóa ghế nguyên tử (`SETNX EX 600`), cấu trúc Sorted Sets quản lý hàng chờ ảo và rate limit |
+| **Bộ Nhớ Đệm & Khóa Ghế** | **Redis** | **Amazon ElastiCache Redis OSS 7.1 production; local Redis 7.2; compatibility test required** | Lưu trữ In-Memory: Chạy Lua Script khóa ghế nguyên tử (`SETNX EX 600`), cấu trúc Sorted Sets quản lý hàng chờ ảo và rate limit |
 | **Message Broker** | **RabbitMQ** | Durable quorum queues, publisher confirms, retry + DLQ | Async events/jobs; consumer idempotent; transactional outbox trong SQL Server; không dùng Kafka trong baseline (D-025) |
 | **Frontend Web Portal** | **React / Next.js (TypeScript)**| Next.js 14+ | Tải trang cực nhanh, tối ưu hóa SEO cho sự kiện, giao tiếp RESTful API & WebSocket cập nhật trạng thái ghế |
 | **Ứng Dụng Di Động** | **Flutter / React Native** | Flutter 3.22+ | Xây dựng ứng dụng iOS & Android từ một mã nguồn; tích hợp hiển thị mã Dynamic QR Code tự đổi mỗi 30s |
-| **NoSQL** | **Không có trong baseline** | — | Redis chỉ giữ state/lock có TTL; SQL Server lưu giao dịch, audit và outbox; ELK chỉ là operational logs theo D-029 |
-| **Đóng gói ứng dụng** | **Docker Engine / Compose** | SQL Server 2025 Developer local; SQL Server 2025 Enterprise production; RabbitMQ theo D-025 |
+| **NoSQL** | **Không có trong baseline** | — | Redis chỉ giữ state/lock có TTL; SQL Server lưu giao dịch, audit và outbox; Amazon CloudWatch Logs lưu operational logs theo D-029 |
+| **Backup & DR** | SQL Server Agent, AWS CLI/SDK, encrypted EBS staging, S3/KMS/Object Lock/CRR, AWS Backup VSS/Vault Lock/Restore Testing | FULL daily / DIFF 6 giờ / LOG 5 phút; PITR 35 ngày, chain 37 ngày | Native SQL backups cho PITR; VSS phục hồi host; target D-036/Q-023 chờ kiểm thử và sign-off |
+| **Đóng gói ứng dụng** | **Docker Engine / Compose** | — | Container hóa dịch vụ; SQL Server Developer chỉ local, Enterprise production; RabbitMQ theo D-025 |
 
 ---
 
@@ -48,7 +50,7 @@ Dự án sử dụng **VS Code** làm IDE phát triển thống nhất cho toàn
 **Astah** là công cụ mô hình hóa trực quan được chỉ định để người thiết kế chuyển hóa toàn bộ tài liệu BA thành các sơ đồ kỹ thuật chuẩn UML 2.5:
 - **Use Case Diagram:** Vẽ sơ đồ tương tác giữa 4 Actor (Customer, Organizer, Admin, Staff) với 15 Use Cases cốt lõi và các quan hệ `<<include>>`, `<<extend>>`.
 - **Sequence Diagram:** Vẽ luồng thông điệp thời gian thực cho:
-  - Khóa giữ ghế phân tán (Client $\rightarrow$ API Gateway $\rightarrow$ Booking Service $\rightarrow$ Redis $\rightarrow$ SQL Server Primary).
+  - Khóa giữ ghế phân tán (Client → AWS ALB → Spring Boot API → Amazon ElastiCache for Redis OSS → SQL Server Primary).
   - Luồng thanh toán đối soát VNPay/MoMo Webhook Callback.
   - Luồng giải mã Dynamic QR soát vé tại cổng trong $\le 500\text{ ms}$.
 - **State Machine Diagram:** Vẽ 5 cỗ máy trạng thái: Vòng đời Concert (6 trạng thái), Vòng đời Ghế (`AVAILABLE` $\leftrightarrow$ `HELD` $\rightarrow$ `SOLD`), Vòng đời Đơn hàng, Vòng đời Vé và Trạng thái Thanh toán.
@@ -102,10 +104,10 @@ Dự án sử dụng **VS Code** làm IDE phát triển thống nhất cho toàn
   - Mỗi PR bắt buộc phải liên kết mã Ticket trên Jira (VD: `[TICK-102] Implement distributed seat hold in Java`).
   - Bắt buộc tối thiểu 2 thành viên cấp Senior Review và Approved trước khi gộp (Merge).
   - Toàn bộ bài kiểm tra tự động (CI) phải Pass $100\%$.
-- **GitHub Actions (CI/CD Pipeline):** Tự động kích hoạt khi có commit:
-  - Chạy `mvn clean test` kiểm tra Unit Test mã nguồn Java.
-  - Quét chất lượng mã nguồn bằng SonarQube.
-  - Xây dựng Docker Image và đẩy lên Docker Registry.
+- **AWS CodePipeline + CodeBuild (CI/CD):** GitHub là source repository và kết nối qua AWS CodeConnections; pipeline tự động kích hoạt theo thay đổi đã cấu hình:
+  - CodeBuild chạy mvn clean test, coverage và kiểm tra chất lượng mã nguồn Java.
+  - CodeBuild gọi SonarQube/Trivy nếu được chọn; kết quả là quality gate trước deploy.
+  - Build image gắn tag bất biến theo commit, push lên Amazon ECR; CodePipeline EKS deploy action V2 triển khai manifest vào staging/production theo manual approval.
 
 ### 7. Docker & Docker Compose — Chuẩn Hóa Môi Trường Ứng Dụng
 - **Multi-Stage Dockerfile Cho Ứng Dụng Java Spring Boot:**
@@ -140,13 +142,14 @@ flowchart TD
   local["Docker Compose — local environment and SQL Server"]
   api["Postman — API collection checks"]
   github["GitHub PR — source review"]
-  actions["GitHub Actions — build and test"]
-  uat["Jira status update and UAT handoff"]
+  pipeline["AWS CodePipeline V2"]
+  actions["AWS CodeBuild — build/test/scan"]
+  uat["AWS CodePipeline — EKS deploy / approval"]
   jira1 --> design
   design --> figma
   design --> astah
   figma --> code
   astah --> code
-  code --> local --> api --> github --> actions --> uat --> jira1
+  code --> local --> api --> github --> pipeline --> actions --> uat --> jira1
 ```
 <!-- END MERMAID DIAGRAM CONVERT-05_Technology_Stack_And_Development_Tools -->

@@ -2,7 +2,7 @@
 
 ## 1. Giới Thiệu & Nguyên Tắc Thiết Kế
 
-Tài liệu này đặc tả toàn bộ lược đồ cơ sở dữ liệu quan hệ của hệ thống bán vé sự kiện âm nhạc, gồm 20 bảng nghiệp vụ và 1 transactional outbox (21 bảng baseline); không có bảng voucher theo D-031. Kiểu dữ liệu logic tương thích Microsoft SQL Server (phiên bản/edition theo D-026), có PK/FK và ràng buộc toàn vẹn.
+Tài liệu này đặc tả toàn bộ lược đồ cơ sở dữ liệu quan hệ của hệ thống bán vé sự kiện âm nhạc, gồm 21 bảng nghiệp vụ và 1 transactional outbox (22 bảng baseline); không có bảng voucher theo D-031. Kiểu dữ liệu logic tương thích Microsoft SQL Server (phiên bản/edition theo D-026), có PK/FK và ràng buộc toàn vẹn.
 
 Người đọc và kỹ sư kiến trúc dùng tài liệu này làm đầu vào trực tiếp để vẽ sơ đồ **Entity Relationship Diagram (ERD) trên công cụ Astah** và sinh mã di chuyển lược đồ cơ sở dữ liệu (**Database Migrations - Flyway / Liquibase** trong dự án Java Spring Boot).
 
@@ -41,6 +41,7 @@ Người đọc và kỹ sư kiến trúc dùng tài liệu này làm đầu và
 | orders | 1 : 0..N | settlement_entries | FK nullable order_id → orders.id | Dòng nguồn payment/refund tham chiếu order tương ứng |
 | payment_transactions | 1 : 0..N | settlement_entries | FK nullable payment_transaction_id → payment_transactions.id | Dòng doanh thu chỉ ghi payment đã xác nhận |
 | refunds | 1 : 0..N | settlement_entries | FK nullable refund_id → refunds.id | Dòng giảm trừ chỉ ghi refund đã xác nhận |
+| payment_transactions | 1 : 0..N | payment_idempotency_log | FK nullable payment_transaction_id → payment_transactions(id) | Lưu vết bền vững chống xử lý webhook/IPN trùng lặp |
 
 
 <!-- BEGIN MERMAID DIAGRAM DESIGN-ERD -->
@@ -366,6 +367,9 @@ erDiagram
 | `created_at` | DATETIME2(6) | No | `SYSUTCDATETIME()` | — | Thời điểm tạo |
 
 #### 12. Bảng `tickets` (Vé điện tử phát hành)
+
+> **Buyer vs Attendee separation:** `user_id` (FK → `users.id`) = người mua vé, chủ tài khoản, người thanh toán. `attendee_name` / `attendee_phone` / `attendee_id_number` = người sẽ vào cửa, có thể khác người mua. Hỗ trợ trường hợp 1 người mua nhiều vé cho nhiều người khác nhau.
+
 | Tên cột | Kiểu dữ liệu | Nullable | Mặc định | Khóa / Ràng buộc | Diễn giải |
 |---|---|---|---|---|---|
 | `id` | UNIQUEIDENTIFIER | No | `Sinh tại ứng dụng` | **PK** | Định danh vé |
@@ -373,9 +377,12 @@ erDiagram
 | `order_id` | UNIQUEIDENTIFIER | No | — | **FK** $\rightarrow$ `orders(id)` | Đơn hàng phát hành |
 | `order_item_id` | UNIQUEIDENTIFIER | No | — | **FK** $\rightarrow$ `order_items(id)`, **UNIQUE** | Một vé hiện hành tối đa cho mỗi item; vé lịch sử của lần bán trước vẫn được lưu ở item cũ |
 | `seat_id` | UNIQUEIDENTIFIER | No | — | **FK** $\rightarrow$ `seats(id)` | Ghế tương ứng |
-| `user_id` | UNIQUEIDENTIFIER | No | — | **FK** $\rightarrow$ `users(id)` | Chủ sở hữu vé |
+| `user_id` | UNIQUEIDENTIFIER | No | — | **FK** $\rightarrow$ `users(id)` | Người mua vé (buyer) — chủ tài khoản, người thanh toán |
 | `concert_id` | UNIQUEIDENTIFIER | No | — | **FK** $\rightarrow$ `concerts(id)` | Sự kiện tham gia |
 | `qr_code_hash` | NVARCHAR(128) | No | — | **UNIQUE** | Chuỗi băm đối chiếu mã QR |
+| `attendee_name` | NVARCHAR(200) | No | — | — | Họ tên người sẽ sử dụng vé thực tế (người vào cổng); mặc định = `users.full_name` của người mua nếu tự dùng, có thể chỉnh trước khi thanh toán |
+| `attendee_phone` | NVARCHAR(20) | No | — | — | Số điện thoại người sử dụng vé; mặc định = `users.phone_number` của người mua, có thể chỉnh trước khi thanh toán |
+| `attendee_id_number` | NVARCHAR(20) | Yes | NULL | — | CCCD/CMND của người sẽ vào cổng (tùy chọn); dùng để đối chiếu danh tính tại cổng nếu ban tổ chức yêu cầu |
 | status | NVARCHAR(30) | No | ORDERED | CHECK (ORDERED, CHECKED, CANCELLED, EXPIRED_UNATTENDED) | Trạng thái vé theo SM04; không đồng nhất với trạng thái notification |
 | `created_at` | DATETIME2(6) | No | `SYSUTCDATETIME()` | — | Thời điểm phát hành |
 | `updated_at` | DATETIME2(6) | No | `SYSUTCDATETIME()` | — | Thời điểm cập nhật |
@@ -536,4 +543,22 @@ Tổng organizer_settlements phải đối chiếu bằng tổng settlement_entr
 | published_at | DATETIME2(6) | Yes | NULL | — | Thời điểm broker xác nhận publish |
 | expires_at | DATETIME2(6) | No | — | INDEX | Retention/replay tối đa 7 ngày theo D-029 |
 
-Outbox row được ghi trong cùng SQL transaction với thay đổi nghiệp vụ; publisher chỉ đánh dấu PUBLISHED sau publisher confirm từ RabbitMQ. Consumer phải idempotent. Bản ghi hết hạn được archive/xóa theo retention đã phê duyệt; không dùng RabbitMQ hoặc ELK làm nguồn dữ liệu giao dịch.
+Outbox row được ghi trong cùng SQL transaction với thay đổi nghiệp vụ; publisher chỉ đánh dấu PUBLISHED sau publisher confirm từ RabbitMQ. Consumer phải idempotent. Bản ghi hết hạn được archive/xóa theo retention đã phê duyệt; không dùng Amazon MQ hoặc CloudWatch Logs làm nguồn dữ liệu giao dịch.
+
+#### 22. Bảng payment_idempotency_log (Nhật ký xử lý Idempotency thanh toán & IPN)
+
+| Tên cột | Kiểu dữ liệu | Nullable | Mặc định | Khóa / Ràng buộc | Diễn giải |
+|---|---|---|---|---|---|
+| `id` | UNIQUEIDENTIFIER | No | Sinh tại ứng dụng | **PK** | Khóa chính bản ghi idempotency |
+| `idempotency_key` | NVARCHAR(128) | No | — | **UNIQUE**, INDEX | Khóa idempotency duy nhất: `{txn_ref}_{gateway}_{event_type}` |
+| `payment_transaction_id` | UNIQUEIDENTIFIER | Yes | NULL | FK → `payment_transactions(id)`, ON DELETE SET NULL | Giao dịch thanh toán liên kết |
+| `order_id` | UNIQUEIDENTIFIER | Yes | NULL | FK → `orders(id)`, ON DELETE RESTRICT | Đơn hàng liên kết |
+| `gateway` | NVARCHAR(50) | No | — | CHECK IN ('VNPAY', 'MOMO') | Cổng thanh toán gửi IPN |
+| `event_type` | NVARCHAR(50) | No | 'IPN_WEBHOOK' | — | Loại sự kiện (IPN_WEBHOOK, REFUND_IPN) |
+| `status` | NVARCHAR(30) | No | 'PROCESSING' | CHECK IN ('PROCESSING', 'SUCCESS', 'FAILED') | Trạng thái xử lý sự kiện |
+| `request_hash` | NVARCHAR(128) | Yes | NULL | — | Hash SHA-256 đối chiếu toàn vẹn payload nhận |
+| `response_snapshot` | NVARCHAR(MAX) | Yes | NULL | ISJSON(response_snapshot)=1 | Snapshot JSON phản hồi trả về cho cổng |
+| `created_at` | DATETIME2(6) | No | `SYSUTCDATETIME()` | — | Thời điểm tiếp nhận yêu cầu đầu tiên |
+| `completed_at` | DATETIME2(6) | Yes | NULL | — | Thời điểm xử lý hoàn tất |
+
+> **Nguyên tắc bền vững:** Redis chỉ đóng vai trò cache tăng tốc và lock phân tán tạm thời (TTL 24h). `payment_idempotency_log` trong SQL Server là nguồn sự thật bền vững đảm bảo tính lũy thừa tuyệt đối, ngăn chặn xử lý lại IPN webhook trùng lặp ngay cả khi Redis gặp sự cố hoặc cache bị xóa.

@@ -22,16 +22,16 @@ Hệ thống bảo vệ tài nguyên lõi thông qua 4 lớp lá chắn tuần t
 ```mermaid
 flowchart TB
   users["Up to 100,000 CCU during flash sale"]
-  edge["Layer 1 — CDN Edge / Anycast DNS<br/>DDoS controls and static content"]
+  edge["Layer 1 — Route 53 + CloudFront + AWS WAF<br/>DDoS controls and static content"]
   waiting["Waiting room<br/>pre-sale holding and random order at T0"]
   gate["Admission control<br/>maximum 5,000 active seat-selection users"]
-  l4["Layer 2 — L4 load balancing"]
-  l7["Layer 3 — L7 Gateway<br/>TLS, JWT, rate limit, queue-token check"]
+  alb["Layer 2 — AWS ALB HTTP/WSS ingress"]
+  l7["Layer 3 — Amazon EKS application ingress<br/>TLS, JWT, rate limit, queue-token check"]
   app["Modular Monolith application pods"]
-  state["Redis Cluster<br/>queue state and distributed seat locks"]
+  state["Amazon ElastiCache for Redis OSS<br/>queue state and distributed seat locks"]
   db[("SQL Server Primary<br/>transactional guard and source of truth")]
   users --> edge --> waiting
-  waiting -->|valid access token and free slot| gate --> l4 --> l7 --> app
+  waiting -->|valid access token and free slot| gate --> alb --> l7 --> app
   app <--> state
   app --> db
   note["The 95,000 waiting / 5,000 admitted split is the document's capacity scenario. Seat-hold TTL remains 600 seconds; the 120-second inactivity rule releases the queue slot, not an existing seat hold."]
@@ -63,18 +63,18 @@ flowchart TB
   - Cứ mỗi 30 giây, hệ thống tính toán số lượng người vừa rời đi (đã đặt vé xong hoặc không gửi heartbeat xác thực trong 120 giây) để cấp quyền slot admission cho người tiếp theo. Queue token revocation không release các seat hold đang còn TTL 600 giây.
 - Khi được phép vào, người dùng nhận được một thẻ thông hành điện tử **Queue Access Token**:
   - Queue Access Token được ký HMAC-SHA256, TTL 120 giây từ hoạt động hợp lệ cuối và được gia hạn bằng heartbeat xác thực mỗi 30 giây khi trang chọn ghế foreground; WebSocket đơn thuần không gia hạn (D-015).
-  - API Gateway kiểm tra tính hợp lệ của token này trên mọi request vào vùng chọn ghế và giữ ghế (`/seats/hold`). Bất kỳ ai cố vượt hàng (Bypass Queue) mà không có token hợp lệ đều bị từ chối ngay tại Gateway với mã `403 Forbidden`.
+  - Spring Boot API xác minh Queue Access Token cho mọi request vào vùng chọn ghế/giữ ghế. ALB chỉ định tuyến; request thiếu token hợp lệ bị ứng dụng từ chối với 403.
 
 ---
 
 ## 4. Tầng Cân Bằng Tải & Tối Ưu Hóa Socket Mạng (Load Balancer & Network Tuning)
 
-### 1. Phân Tách Cân Bằng Tải 2 Tầng (L4 & L7 Load Balancing)
-- **Cân bằng tải Lớp 4 (Layer 4 - AWS NLB / IPVS):** Hoạt động ở tầng TCP, có khả năng xử lý hàng triệu gói tin mỗi giây với độ trễ micro-giây. Chịu trách nhiệm phân phối lưu lượng vào các node Gateway mà không giải mã SSL.
-- **Cân bằng tải Lớp 7 (Layer 7 - Kong / Envoy Gateway):** Thực hiện giải mã TLS 1.3, định tuyến đường dẫn URI, xác thực JWT, kiểm tra Rate Limit và chèn tiêu đề kiểm toán (Tracing Header).
+### 1. Tiếp Nhận HTTPS/WebSocket và Phân Phối Tải trên AWS
+- **Application Load Balancer (ALB):** nhận HTTP/HTTPS và WebSocket, kết thúc TLS theo listener/certificate đã cấu hình, health-check target và phân phối tới EKS. ALB là L7; không gán cho nó chức năng raw TCP L4 hoặc mức thông lượng/độ trễ cố định khi chưa benchmark.
+- **AWS WAF + ứng dụng:** WAF áp dụng managed/rate-based rules tại CloudFront; Spring Boot thực hiện JWT, queue-token, RBAC và giới hạn nghiệp vụ theo user/concert; ElastiCache chỉ hỗ trợ bộ đếm phân tán. Các lớp TLS, tracing và headers được cấu hình tại CloudFront/ALB/ứng dụng theo đúng trách nhiệm từng lớp.
 
 ### 2. Tinh Chỉnh Tham Số Hệ Điều Hành Linux (OS Kernel Parameter Tuning)
-Các node máy chủ chạy Gateway và Microservices được cấu hình tham số nhân Linux để chịu tải $100.000$ kết nối TCP mở đồng thời:
+Các EC2 managed node groups của EKS chạy app/worker; file descriptor, connection backlog và sysctl chỉ tinh chỉnh qua cấu hình node group đã kiểm thử. Sizing cho 100.000 CCU là release gate trên topology production-like:
 
 ```ini
 # Tăng giới hạn số lượng file descriptors mở đồng thời
@@ -109,7 +109,7 @@ Khi lưu lượng truy cập vượt quá kịch bản dự kiến (ví dụ đ�
 | **Cấp độ 1: Bình thường** ($< 50.000\text{ CCU}$) | Xanh lá (Normal) | Vận hành toàn bộ tính năng đầy đủ | Trải nghiệm đầy đủ 100% |
 | **Cấp độ 2: Cao điểm** ($50.000 – 100.000\text{ CCU}$) | Vàng (Peak Sale) | Kích hoạt phòng chờ ảo; Giãn tần suất polling queue từ 3s lên 5s; Vô hiệu hóa ghi log chi tiết mức Debug | Người dùng xếp hàng theo thứ tự; Giao diện mượt mà |
 | **Cấp độ 3: Quá tải cảnh báo** ($100.000 – 150.000\text{ CCU}$) | Cam (Overload) | Tắt toàn bộ các tính năng phụ: Gợi ý concert liên quan, bình luận đánh giá, lịch sử chi tiết; Tắt đồng bộ gợi ý tìm kiếm | Chỉ giữ lại 3 luồng sống còn: Xếp hàng, Giữ ghế, Thanh toán |
-| **Cấp độ 4: Tải cực đại (Emergency)** ($> 150.000\text{ CCU}$) | Đỏ (Shedding) | Cơ chế **Load Shedding** tại Gateway: Từ chối tiếp nhận thêm người mới vào phòng chờ; Trả về trang tĩnh thông báo: *"Hệ thống đang phục vụ tối đa lượt khách, vui lòng thử lại sau 15 phút"* | Bảo vệ $100\%$ những người dùng đã vào trong phòng mua không bị văng ra ngoài |
+| **Cấp độ 4: Tải cực đại (Emergency)** (> 150.000 CCU) | Đỏ (Shedding) | Admission control trong Spring Boot từ chối thêm user mới; AWS WAF rate rules bảo vệ edge; CloudFront/S3 phục vụ trang tĩnh thông báo. Không nhận thêm người vào khu chọn ghế khi capacity gate đóng. | Bảo vệ các phiên đã được admission trong ngưỡng tải đã kiểm thử |
 
 <!-- BEGIN MERMAID DIAGRAM NFR-DEGRADE -->
 ### Chế độ phục vụ theo mức tải

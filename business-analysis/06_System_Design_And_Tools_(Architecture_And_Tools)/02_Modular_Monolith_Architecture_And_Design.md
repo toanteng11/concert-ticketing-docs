@@ -103,7 +103,7 @@ com.ticketplatform.worker/
 ├── TicketWorkerApplication.java
 ├── notification/
 │   ├── NotificationConsumer.java    ← @RabbitListener("notification.send")
-│   └── EmailSender.java             ← SendGrid / AWS SES API
+│   └── EmailSender.java             ← Amazon SES API
 ├── refund/
 │   ├── RefundConsumer.java          ← @RabbitListener("refund.process")
 │   └── RefundProcessor.java         ← Gọi VNPay Refund API, cập nhật SQL Server
@@ -151,7 +151,7 @@ flowchart LR
   end
   redis["Redis<br/>queue, locks, rate limits"]
   sql[("SQL Server<br/>module-owned tables, shared database")]
-  broker["Message broker<br/>RabbitMQ baseline per D-025"]
+  broker["Amazon MQ for RabbitMQ<br/>baseline per D-025/D-035"]
   subgraph WORKER["ticket-worker — separate process"]
     consumers["Notification / refund / order-cancel consumers"]
   end
@@ -271,7 +271,7 @@ Client redirect → VNPay → Thanh toán
 
 [Sau COMMIT — Non-blocking]
   9. Publish "notification.send" → RabbitMQ     ← Fire & Forget
-     Worker nhận → SendGrid email + FCM push
+     Worker nhận → Amazon SES email + Amazon SNS Mobile Push
 ```
 
 ### Luồng Rollback — Timeout Thanh Toán (10 phút)

@@ -6,7 +6,7 @@ Tài liệu này định nghĩa mô hình kiểm soát truy cập dựa trên va
 
 Tài liệu là tiền đề trực tiếp để:
 1. **Thiết kế sơ đồ Use Case (Use Case Diagrams)**: Xác định rõ Actor nào liên kết với các Use Case nào.
-2. **Thiết kế API Gateway & Authorization Service**: Cung cấp ma trận phân quyền để kiểm tra phân quyền (RBAC Policy Enforcement), thiết lập Scopes/Roles trong JWT Access Token.
+2. **Thiết kế API Layer và Authorization trong ứng dụng:** Cung cấp ma trận phân quyền RBAC, thiết lập scopes/roles trong JWT; ALB định tuyến request tới Spring Boot, còn ứng dụng thực thi authorization.
 3. **Thiết kế UI/UX & Dynamic Navigation**: Ẩn/hiện các chức năng trên giao diện Web, iOS, Android phù hợp với vai trò của người đăng nhập.
 4. **Bảo mật hệ thống (Security Architecture)**: Đảm bảo nguyên tắc đặc quyền tối thiểu (Principle of Least Privilege) và phòng chống lỗ hổng leo thang đặc quyền (Privilege Escalation / IDOR).
 

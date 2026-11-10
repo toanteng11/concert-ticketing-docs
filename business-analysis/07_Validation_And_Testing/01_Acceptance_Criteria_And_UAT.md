@@ -29,8 +29,10 @@ Kiểm thử Chấp nhận của Người dùng (**User Acceptance Testing - UAT
 - [ ] **AC-UAT-02.3:** Sơ đồ khán đài hiển thị trực quan các phân khu (Zone), hàng ghế và vị trí từng ghế; trạng thái màu sắc thay đổi mượt mà theo thời gian thực (Trắng: Trống; Vàng: Đang giữ; Đỏ: Đã bán).
 - [ ] **AC-UAT-02.4:** Một tài khoản chỉ được phép chọn tối đa **4 vé** trong một lần giao dịch. Cố chọn chiếc thứ 5 lập tức bị hệ thống cảnh báo và vô hiệu hóa.
 - [ ] **AC-UAT-02.5 (Tuyệt đối không bán trùng):** Khi 2 người dùng cùng nhấp vào 1 ghế trống tại cùng một thời điểm: Duy nhất 1 người nhận được thông báo "Giữ ghế thành công"; người còn lại nhận thông báo "Ghế vừa được người khác giữ" trong vòng $< 300\text{ ms}$.
-- [ ] **AC-UAT-02.6:** Đồng hồ đếm lùi giữ ghế 10 phút ($600\text{ giây}$) hiển thị chính xác. Khi hết $600\text{ giây}$ mà khách chưa thanh toán, ghế tự động chuyển về trạng thái `AVAILABLE` cho cộng đồng.
-- [ ] **AC-UAT-02.7:** Queue Access Token/slot hết hạn sau 120 giây không hoạt động hợp lệ; WebSocket còn mở không gia hạn. Seat hold đã tạo vẫn giữ đủ 600 giây tính từ lần giữ đầu tiên theo D-015.
+- [ ] **AC-UAT-02.6:** Đồng hồ đếm lùi giữ ghế 5 phút ($300\text{ giây}$) hiển thị chính xác. Khi hết $300\text{ giây}$ mà khách chưa thanh toán, ghế tự động chuyển về trạng thái `AVAILABLE` cho cộng đồng.
+- [ ] **AC-UAT-02.7:** Queue Access Token/slot hết hạn sau 120 giây không hoạt động hợp lệ; WebSocket còn mở không gia hạn. Seat hold đã tạo vẫn giữ đủ 300 giây tính từ lần giữ đầu tiên theo D-015.
+- [ ] **AC-UAT-02.8 (Thông tin người sử dụng vé - Attendee Information):** Mua 1 vé tự dùng mặc định thông tin người mua, cho phép chỉnh sửa; mua 2–4 vé bắt buộc điền Họ tên, SĐT từng người sử dụng trước khi bấm thanh toán; CCCD/CMND tùy chọn (BR-SEAT-009). Vé và QR in tên người sử dụng thực tế.
+- [ ] **AC-UAT-02.9 (Ước tính thời gian chờ FIFO):** Người đến sau T0 xếp hàng FIFO nhận thông tin vị trí và thời gian chờ ước tính động qua WebSocket `POSITION_UPDATED` dựa trên throughput thực tế giải phóng slot 60 giây gần nhất (BR-QUEUE-009).
 
 ---
 
@@ -40,9 +42,10 @@ Kiểm thử Chấp nhận của Người dùng (**User Acceptance Testing - UAT
 - [ ] **AC-UAT-03.3:** Nhấp đúp nút "Xác nhận thanh toán" hoặc tải lại trang thanh toán nhiều lần không bao giờ bị trừ tiền 2 lần (Nhờ Idempotency Key).
 - [ ] **AC-UAT-03.4:** Sau khi chuyển tiền thành công, trạng thái đơn hàng tự động chuyển sang `PAID` trong vòng $< 3\text{ giây}$ mà không cần người dùng tải lại trang.
 - [ ] **AC-UAT-03.5 (Chính sách hoàn tiền):** Với order không có ticket CHECKED, ngày địa phương còn ≥7 ngày hoàn 100%, còn 3–6 ngày hoàn 50% tổng giá vé đủ điều kiện (làm tròn half-up một lần), còn 0–2 ngày không hoàn tự nguyện; phí dịch vụ/thuế không hoàn. Tính theo timezone địa điểm (D-024, BR-RFD-001/006). Provider quyết định thời gian tiền về.
-- [ ] **AC-UAT-03.6 (Late capture):** Nếu provider xác nhận capture sau khi hold 600 giây hết hạn, ghi SUCCESS_UNFULFILLED; không hồi sinh hold, không tạo order mới, không chiếm lại ghế. Chỉ sau khi xác minh capture mới tạo đúng một refund 100% số tiền thực thu (D-016/D-032).
+- [ ] **AC-UAT-03.6 (Late capture):** Nếu provider xác nhận capture sau khi hold 300 giây hết hạn, ghi SUCCESS_UNFULFILLED; không hồi sinh hold, không tạo order mới, không chiếm lại ghế. Chỉ sau khi xác minh capture mới tạo đúng một refund 100% số tiền thực thu (D-016/D-032).
 - [ ] **AC-UAT-03.7 (UNKNOWN):** Payment/refund timeout chuyển UNKNOWN; đối soát tại 30 giây, 5 phút, 30 phút; không retry mù hoặc tạo payment attempt mới khi kết quả chưa rõ. Chỉ retry sau thất bại xác định; UNKNOWN refund quá 30 phút vào manual queue theo D-032/D-033.
 - [ ] **AC-UAT-03.8 (UC08):** Lịch sử đơn chỉ trả đơn thuộc user đã xác thực; trạng thái đơn, số tiền snapshot và vé hiển thị khớp dữ liệu giao dịch, không lộ order của tài khoản khác.
+- [ ] **AC-UAT-03.9 (Đồng bộ Primary-Secondary & Idempotency IPN):** Xử lý IPN thanh toán được ghi nguyên tử trên Primary DB; chỉ sau khi Primary COMMIT và Synchronous Secondary ACK hardened log thì hệ thống mới đánh dấu `payment_idempotency_log` hoàn tất, phản hồi HTTP 200 cho cổng thanh toán và phát tán outbox event thông báo vé sẵn sàng cho khách hàng.
 
 ---
 

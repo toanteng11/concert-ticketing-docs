@@ -12,7 +12,7 @@
 | **Actor chính** | Khách hàng (Customer) |
 | **Actor phụ** | VNPay Gateway, MoMo Gateway, Notification Service |
 | **Mức độ ưu tiên** | 🔴 Critical |
-| **Precondition** | Customer đang giữ ≥ 1 ghế (seat.status = HELD, hold_user_id = customer); đồng hồ 10 phút vẫn còn chạy |
+| **Precondition** | Customer đang giữ ≥ 1 ghế (seat.status = HELD, hold_user_id = customer); đồng hồ 5 phút vẫn còn chạy |
 | **BR liên quan** | BR-ORD-001 đến BR-ORD-008; BR-PAY-001 đến BR-PAY-008; BR-TCK-001 |
 
 ---
@@ -65,6 +65,7 @@ flowchart LR
 - Tất cả ghế trong danh sách đang ở `HELD` với đúng `hold_user_id`.
 - Đơn hàng chưa được tạo trước đó cho cùng phiên này (Idempotency Key chưa dùng).
 - Customer đã xác thực số điện thoại (bắt buộc để thanh toán).
+- Thông tin người sử dụng vé đã được nhập đầy đủ cho tất cả ghế trong đơn.
 
 ---
 
@@ -76,7 +77,7 @@ flowchart LR
 - Email xác nhận và Push Notification được gửi đến customer.
 
 **Thất bại:**
-- Ghế giữ nguyên `HELD` cho đến khi hết TTL 10 phút.
+- Ghế giữ nguyên `HELD` cho đến khi hết TTL 5 phút.
 - Không tạo vé; không trừ tiền (hoặc kích hoạt hoàn tiền tự động nếu tiền đã bị trừ nhầm).
 
 ---
@@ -126,7 +127,7 @@ flowchart LR
 
 | ID | Điều kiện | Xử lý |
 |---|---|---|
-| EX-01 | Đồng hồ 10 phút hết hạn trong khi customer đang ở trang checkout (chưa bấm thanh toán) | Hiện cảnh báo ở giây 60 cuối; khi hết → Hiện "Phiên đã hết hạn"; redirect về sơ đồ ghế |
+| EX-01 | Đồng hồ 5 phút hết hạn trong khi customer đang ở trang checkout (chưa bấm thanh toán) | Hiện cảnh báo ở giây 60 cuối; khi hết → Hiện "Phiên đã hết hạn"; redirect về sơ đồ ghế |
 | EX-02 | Không nhận response sau 30 giây, kết quả gateway chưa xác định | Ghi payment status UNKNOWN; hiển thị đang xác minh; reconcile tại 30 giây, 5 phút, 30 phút. Không retry/tạo attempt mới khi chưa có xác nhận provider thất bại hoặc void; UNKNOWN quá 30 phút chuyển support queue (D-033) |
 | EX-03 | Số tiền IPN Webhook không khớp với `order.final_amount` | Ghi cờ `SUSPICIOUS_PAYMENT_FRAUD`; alert team an ninh; không cập nhật đơn hàng |
 | EX-04 | Chữ ký HMAC không hợp lệ | Từ chối xử lý; ghi Security Alert; không trả lỗi ra ngoài (trả 200 OK) |
@@ -141,10 +142,12 @@ flowchart LR
 |---|---|
 | **Thông tin sự kiện** | Tên concert, nghệ sĩ, ngày giờ, địa điểm |
 | **Danh sách ghế** | Từng ghế: Mã ghế, Zone, Giá ghế |
+| **Thông tin người sử dụng vé (Attendee Information)** | Từng ghế: Mã ghế \| Zone \| Tên người sử dụng \| SĐT người sử dụng \| CCCD (nếu có); nếu chưa nhập đủ thông tin, nút "Thanh toán ngay" bị vô hiệu hóa |
 | **Bảng tổng tiền** | Giá vé x số lượng, Phí dịch vụ (%), VAT (nếu có), **Tổng cộng** |
-| **Đồng hồ đếm ngược** | Còn X:XX phút để hoàn tất thanh toán (màu đỏ khi < 2 phút) |
+| **Đồng hồ đếm ngược** | Còn X:XX phút để hoàn tất thanh toán (màu đỏ khi < 1 phút) |
 | **Chọn phương thức** | VNPay (ATM nội địa, QR, Visa), MoMo (ví, thẻ liên kết) |
 | **Thông tin người mua** | Họ tên, SĐT (từ hồ sơ tài khoản, có thể chỉnh sửa) |
+| **Thông tin người sử dụng vé** | Một dòng per ghế: Mã ghế, Tên người sử dụng, SĐT, CCCD (nếu có) |
 
 ---
 
@@ -163,6 +166,7 @@ flowchart LR
 | AC-07-01-03 | Từ khi IPN thành công đến khi vé và QR sẵn sàng: < 3 giây | Performance |
 | AC-07-01-04 | Sau khi payment được xác nhận, notification được enqueue trong ≤5 giây; trạng thái provider được ghi nhận khi có; không cam kết thời gian chấp nhận/giao của nhà cung cấp bên thứ ba | Performance / Integration |
 | AC-07-01-05 | Thông tin ghế, giá vé trong đơn hàng khớp 100% với những gì hiển thị trên trang checkout | Functional (Critical) |
+| AC-07-01-06 | Trang checkout hiển thị danh sách người sử dụng vé khớp với từng ghế (Mã ghế, Tên, SĐT, CCCD nếu có); nút "Thanh toán ngay" chỉ được kích hoạt khi tất cả ghế đã có đầy đủ thông tin người sử dụng | Functional |
 
 ---
 
@@ -174,9 +178,9 @@ flowchart LR
 
 | AC | Mô tả | Loại |
 |---|---|---|
-| AC-07-02-01 | Đồng hồ đếm ngược hiển thị liên tục trên trang checkout; chuyển màu đỏ khi còn < 2 phút | Functional |
+| AC-07-02-01 | Đồng hồ đếm ngược hiển thị liên tục trên trang checkout; chuyển màu đỏ khi còn < 1 phút | Functional |
 | AC-07-02-02 | Khi còn 60 giây: popup/toast cảnh báo "Còn 1 phút — Thanh toán ngay!" | UX |
-| AC-07-02-03 | Khi hết 10 phút: thông báo rõ ràng "Đã hết thời gian giữ ghế. Ghế của bạn đã được trả về cho người khác." | Functional |
+| AC-07-02-03 | Khi hết 5 phút: thông báo rõ ràng "Đã hết thời gian giữ ghế. Ghế của bạn đã được trả về cho người khác." | Functional |
 
 ---
 
@@ -204,5 +208,5 @@ flowchart LR
 | UC07.4 — Thanh toán qua MoMo | Customer | MoMo Gateway | Deep link App + IPN Webhook |
 | UC07.5 — Xử lý IPN Webhook | System | VNPay / MoMo | Validate HMAC + khớp tiền + idempotency |
 | UC07.6 — Phát hành vé điện tử | System | Ticket Service, QR Service | Sau khi IPN SUCCESS |
-| UC07.7 — Gửi thông báo xác nhận | System | Email Service, Push Service | Email + Push trong < 30s |
+| UC07.7 — Gửi thông báo xác nhận | System | Amazon SES, Amazon SNS Mobile Push | Notification được enqueue; provider delivery theo trạng thái phản hồi, không bảo đảm nhà mạng/APNs/FCM hoàn tất trong thời hạn cố định |
 

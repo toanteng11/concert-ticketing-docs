@@ -97,10 +97,10 @@ Các ràng buộc cứng mà hệ thống **phải tuân thủ**:
 | Identity / Auth service | Xác thực người dùng, quản lý session, OAuth2 | Không thể đăng nhập hoặc xác thực quyền |
 | Organizer cung cấp dữ liệu | Thông tin địa điểm, sơ đồ ghế, giá vé đúng định dạng | Không thể tạo concert hợp lệ |
 | Thiết bị quét QR tại cổng | Kết nối mạng và thiết bị phần cứng tại địa điểm | Không thể thực hiện check-in |
-| Redis | Caching, session phòng chờ, giữ ghế (SET NX EX), rate limiting | Chậm hơn nhưng fallback sang DB-level lock |
-| RabbitMQ | Durable queue cho notification và xử lý bất đồng bộ; publisher confirms, retry/DLQ, idempotent consumer | Notification chậm hoặc lỗi chuyển vào retry/DLQ; giao dịch nghiệp vụ vẫn được lưu bền vững |
-| CDN (Cloudflare R2, AWS CloudFront) | Phân phối ảnh poster, banner, file vé | Tải chậm hơn cho người dùng xa server |
-| SQL Server | Lưu trữ chính: đơn hàng, vé, concert (ACID) | Mất dữ liệu giao dịch |
+| Amazon ElastiCache for Redis OSS | Cache, session phòng chờ, giữ ghế và rate limit; SQL Server là nguồn quyết định cuối | Cache lỗi thì hold fail-closed nếu trạng thái chưa xác minh |
+| Amazon MQ for RabbitMQ | Durable queue cho notification/async; publisher confirms, retry/DLQ, consumer idempotent | Notification lỗi vào retry/DLQ; giao dịch vẫn lưu bền vững |
+| Amazon CloudFront + S3 | Phân phối poster, banner, sơ đồ tĩnh, file vé có quyền | API giao dịch không cache công khai |
+| SQL Server 2025 Enterprise trên EC2 | Giao dịch ACID, Always On AG theo D-026/D-035 | Dừng ghi khi failover chưa xác minh |
 
 ---
 

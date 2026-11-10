@@ -164,5 +164,5 @@ flowchart LR
 | UC09.2 — Yêu cầu hoàn tiền đơn PAID | Customer | Refund Service | Kiểm tra điều kiện trước khi cho phép |
 | UC09.3 — Gửi lệnh hoàn tiền tới cổng | System | VNPay / MoMo API | Async; có retry |
 | UC09.4 — Nhận xác nhận hoàn tiền (IPN) | System | VNPay / MoMo | Cập nhật order → REFUNDED |
-| UC09.5 — Thông báo kết quả hoàn tiền | System | Email, Push Service | Gửi mã giao dịch hoàn |
+| UC09.5 — Thông báo kết quả hoàn tiền | System | Amazon SES, Amazon SNS Mobile Push | Gửi mã giao dịch hoàn tiền và trạng thái xử lý |
 

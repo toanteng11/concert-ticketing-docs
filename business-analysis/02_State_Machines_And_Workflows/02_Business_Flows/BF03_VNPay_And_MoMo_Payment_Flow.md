@@ -42,7 +42,7 @@ sequenceDiagram
 
     PAY_API->>PAY_API: Tạo VNPay Payment URL:\nvnp_Amount = order.final_amount * 100\nvnp_TxnRef = payment_transaction_id\nvnp_OrderInfo = "Thanh toan ve concert"\nvnp_ReturnUrl = "{system}/payments/vnpay/return"\nvnp_IpAddr = user_ip\nvnp_CreateDate = NOW()\nvnp_SecureHash = HMACSHA512(secret_key, query_params)
 
-    PAY_API-->>APP: {payment_url: "https://sandbox.vnpayment.vn/paymentv2/...", expires_in: 600}
+    PAY_API-->>APP: {payment_url: "https://sandbox.vnpayment.vn/paymentv2/...", expires_in: 300}
 
     APP-->>C: Chuyển hướng đến trang thanh toán VNPay
     C->>VNPAY: Khách hàng nhập thông tin thanh toán\n(OTP ngân hàng, PIN ví, quét QR...)
@@ -127,8 +127,8 @@ flowchart TD
     AMT_OK -->|Khớp| ORDER_CHECK["7. Kiểm tra trạng thái đơn hàng:\nSELECT status, expires_at\nFROM orders WHERE id = order_id"]
     ORDER_CHECK --> ORDER_STATUS{order.status?}
 
-    ORDER_STATUS -->|PENDING và chưa hết hạn| SUCCESS_FLOW["8. Atomic Transaction:\n- payment_transaction.status = SUCCESS\n- order.status = PAID\n- seats → SOLD\n- Tạo tickets (ORDERED)\n- Publish OrderPaidEvent"]
-    SUCCESS_FLOW --> NOTIFY["Trả 200 OK\nNotification Service\ngửi email + push notification"]
+    ORDER_STATUS -->|PENDING và chưa hết hạn| SUCCESS_FLOW["8. Atomic Transaction (Primary DB):\n- payment_transaction.status = SUCCESS\n- order.status = PAID\n- seats → SOLD\n- Tạo tickets (ORDERED, gắn attendee info)\n- Ghi outbox_events & payment_idempotency_log\n- COMMIT & Chờ Synchronous Secondary ACK"]
+    SUCCESS_FLOW --> NOTIFY["9. Trả 200 OK cho Gateway\nOutbox Publisher gửi event → RabbitMQ\nNotification Service gửi email + push\nWebSocket push kết quả về Client"]
 
     ORDER_STATUS -->|OUT_TIME hoặc CANCELLED| LATE["9. Late Payment:\nKhông hồi sinh hold; không tạo order mới"]
     LATE --> LATE_PAY["Ghi SUCCESS_UNFULFILLED\nkhông claim ghế"]

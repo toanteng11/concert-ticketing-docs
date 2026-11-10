@@ -138,7 +138,7 @@ Mọi thao tác thay đổi dữ liệu hoặc truy cập thông tin nhạy cả
 | **Dữ liệu Đơn hàng, Hóa đơn & Đối soát** | 1 năm trong SQL Server | 4 năm tiếp theo trong AWS S3 Glacier | Sau đúng **5 năm** kể từ ngày quyết toán thuế | Luật Kế toán & Luật Thuế VN |
 | **Nhật ký Quét Vé Check-In tại Cổng** | 30 ngày trong SQL Server | 11 tháng tiếp theo trong S3 | Sau **12 tháng** kể từ khi concert kết thúc | Phục vụ đối soát & giải quyết khiếu nại |
 | **Nhật ký Kiểm toán (Audit Logs)** | 1 năm trong SQL Server | 4 năm trong S3 Object Lock | Sau **5 năm** | Tiêu chuẩn kiểm toán bảo mật |
-| **Nhật ký Truy cập Mạng (Access Logs / Nginx)** | 30 ngày trong OpenSearch | 60 ngày tiếp theo dạng nén S3 | Sau **90 ngày** | Nghị định quản lý Internet & An ninh mạng |
+| **Nhật ký Truy cập Mạng (Access Logs / Nginx)** | 30 ngày trong CloudWatch Logs | 60 ngày tiếp theo dạng nén S3 | Sau **90 ngày** | Nghị định quản lý Internet & An ninh mạng |
 | **Phiên làm việc & Token Hàng chờ (Redis)** | 10 phút đến 24 giờ | Không lưu trữ | Tự động hết hạn qua cơ chế Redis TTL | Tối ưu tài nguyên In-Memory |
 
 
@@ -155,7 +155,7 @@ flowchart LR
   order["Order / invoice / reconciliation"] --> finance["SQL Server hot 1 year"] --> glacier["S3 Glacier next 4 years"] --> financePurge["Purge after 5 years from tax settlement"]
   checkin["Gate check-in logs"] --> checkinHot["SQL Server hot 30 days"] --> checkinCold["S3 next 11 months"] --> checkinPurge["Purge 12 months after concert ends"]
   auditData["Audit logs"] --> auditHot["SQL Server hot 1 year"] --> auditCold["S3 Object Lock next 4 years"] --> auditPurge["Purge after 5 years"]
-  logs["Network access logs"] --> hotLogs["OpenSearch hot 30 days"] --> s3Logs["Compressed S3 60 days"] --> logPurge["Purge after 90 days"]
+  logs["Network access logs"] --> hotLogs["CloudWatch Logs hot 30 days"] --> s3Logs["Compressed S3 60 days"] --> logPurge["Purge after 90 days"]
   redisData["Redis sessions and queue tokens"] --> redisTTL["TTL 10 minutes to 24 hours<br/>no archive"]
   note["Apply the table's retention basis and any legal hold; do not treat the visual timeline as overriding statutory requirements."]
   purge -.-> note

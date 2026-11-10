@@ -16,8 +16,8 @@ Tài liệu phục vụ làm căn cứ chuẩn xác để:
 
 | Nhóm mã | Phân hệ (Domain) | Số lượng quy tắc |
 |---|---|---|
-| `BR-QUEUE` | Phòng chờ ảo & Xếp hàng (Virtual Waiting Room & Queue) | 8 quy tắc (`BR-QUEUE-001` → `008`) |
-| `BR-SEAT` | Sơ đồ ghế & Khóa ghế (Seat Map & Seat Holding) | 8 quy tắc (`BR-SEAT-001` → `008`) |
+| `BR-QUEUE` | Phòng chờ ảo & Xếp hàng (Virtual Waiting Room & Queue) | 9 quy tắc (`BR-QUEUE-001` → `009`) |
+| `BR-SEAT` | Sơ đồ ghế & Khóa ghế (Seat Map & Seat Holding) | 9 quy tắc (`BR-SEAT-001` → `009`) |
 | `BR-ORD` | Đơn hàng & Giới hạn giao dịch (Orders & Limits) | 8 quy tắc (`BR-ORD-001` → `008`) |
 | `BR-PAY` | Thanh toán & Cổng thanh toán (Payment & Gateways) | 8 quy tắc (`BR-PAY-001` → `008`) |
 | `BR-TCK` | Vé điện tử & Check-in (E-Ticket & QR Access) | 8 quy tắc (`BR-TCK-001` → `008`) |
@@ -37,7 +37,7 @@ Tài liệu phục vụ làm căn cứ chuẩn xác để:
 - **Mô tả:** Hệ thống tự động mở Phòng chờ ảo (Waiting Room) chính xác 15 phút trước thời điểm mở bán chính thức (`concert.sale_start_time - 15 minutes`). Khách hàng truy cập concert trong khoảng thời gian này sẽ được giữ tại giao diện phòng chờ, hiển thị đồng hồ đếm ngược và không thể truy cập trực tiếp vào khu vực chọn ghế.
 - **Điều kiện kích hoạt:** `current_time >= (concert.sale_start_time - 15m)` VÀ `current_time < concert.sale_start_time`.
 - **Ngoại lệ:** Concert có quy mô dưới 500 ghế hoặc loại hình bán vé không áp dụng phòng chờ (do Admin cấu hình đặc biệt).
-- **Tác động thiết kế:** CDN/Edge proxy chặn trực tiếp request vào API chọn ghế, chuyển hướng sang hệ thống Waiting Room phân tán (Cloudflare Waiting Room hoặc Redis FIFO Queue).
+- **Tác động thiết kế:** CloudFront/AWS WAF lọc traffic ở edge; Waiting Room là logic ứng dụng dùng ElastiCache Redis để quản lý hàng đợi, access token và admission control. AWS không cung cấp dịch vụ waiting room thay cho quy tắc queue tùy biến của hệ thống.
 
 #### BR-QUEUE-002: Xáo trộn ngẫu nhiên thứ tự lúc mở bán (Random Shuffle)
 - **Tên quy tắc:** Phân vị trí ngẫu nhiên cho người đến sớm (Equal Opportunity Shuffle).
@@ -64,7 +64,7 @@ Tài liệu phục vụ làm căn cứ chuẩn xác để:
 
 #### BR-QUEUE-006: Thu hồi phiên chọn ghế khi không hoạt động quá 2 phút (Inactivity Timeout)
 - **Tên quy tắc:** Thu hồi quyền vào khu chọn ghế sau 120 giây không hoạt động.
-- **Mô tả:** Hoạt động hợp lệ là thao tác UI hoặc heartbeat đã xác thực; ứng dụng ở foreground gửi heartbeat mỗi 30 giây. Kết nối WebSocket đơn thuần không được tính là hoạt động. Sau 120 giây từ hoạt động hợp lệ cuối, hệ thống thu hồi Queue Access Token và quyền chọn ghế, cảnh báo từ giây 90. Quy tắc này không hủy và không rút ngắn seat hold đã tạo: hold tiếp tục đến hết 600 giây, do người dùng hủy, hoặc luồng order hợp lệ kết thúc (D-002, D-015).
+- **Mô tả:** Hoạt động hợp lệ là thao tác UI hoặc heartbeat đã xác thực; ứng dụng ở foreground gửi heartbeat mỗi 30 giây. Kết nối WebSocket đơn thuần không được tính là hoạt động. Sau 120 giây từ hoạt động hợp lệ cuối, hệ thống thu hồi Queue Access Token và quyền chọn ghế, cảnh báo từ giây 90. Quy tắc này không hủy và không rút ngắn seat hold đã tạo: hold tiếp tục đến hết 300 giây, do người dùng hủy, hoặc luồng order hợp lệ kết thúc (D-002, D-015).
 
 #### BR-QUEUE-007: Đóng hàng chờ và thông báo khi hết vé
 - **Tên quy tắc:** Dừng cấp lượt mới khi concert hết vé và thông báo trạng thái nhất quán.
@@ -73,6 +73,12 @@ Tài liệu phục vụ làm căn cứ chuẩn xác để:
 #### BR-QUEUE-008: Mã hóa và chống giả mạo Queue Token (Queue Security)
 - **Tên quy tắc:** Token vào phòng chọn ghế phải được ký số và xác thực một lần.
 - **Mô tả:** Token cấp cho người dùng khi đến lượt vào khu chọn ghế (`Access Token`) là JWT được ký bằng HMAC-SHA256, gồm `user_id`, `concert_id`, `queue_number`, `issued_at` và `expires_at`. API chọn ghế xác minh chữ ký, concert, thời hạn và quyền sử dụng token; payload JWT chỉ được ký, không được coi là dữ liệu đã mã hóa và khóa HMAC không được đưa xuống client.
+
+#### BR-QUEUE-009: Ước tính thời gian chờ FIFO (Wait Time Estimation)
+- **Tên quy tắc:** Hệ thống cung cấp ước tính thời gian chờ động cho người trong hàng FIFO.
+- **Mô tả:** Hệ thống tính throughput giải phóng slot theo cơ chế rolling window 60 giây, cập nhật mỗi 10 giây, lưu trữ trên Redis. Công thức ước tính: `wait_time_seconds = (số người xếp trước / throughput_per_min) × 60`. Kết quả được phát đến client qua WebSocket event `POSITION_UPDATED` mỗi khi có cập nhật. Hệ thống không cam kết thời gian chính xác tuyệt đối; đây là ước tính tham khảo dựa trên tốc độ xử lý hiện tại.
+- **Điều kiện áp dụng:** Người dùng đang trong hàng chờ FIFO sau thời điểm T0 (sau `concert.sale_start_time`).
+- **Tác động thiết kế:** Redis lưu key `queue:throughput:{concert_id}` với sliding window count; Worker cập nhật định kỳ mỗi 10 giây; WebSocket server push event `POSITION_UPDATED` gồm `position`, `estimated_wait_seconds`, `updated_at`.
 
 ---
 
@@ -84,17 +90,17 @@ Tài liệu phục vụ làm căn cứ chuẩn xác để:
 - **Xử lý vi phạm:** Nếu 2 yêu cầu giữ cùng một ghế gửi đến đồng thời (sai biệt mili-giây), hệ thống chỉ chấp nhận yêu cầu đầu tiên đến (dựa trên Redis Distributed Lock / Redlock / Database Optimistic Locking); yêu cầu thứ hai lập tức nhận mã lỗi `SEAT_ALREADY_HELD` hoặc `SEAT_CONFLICT`.
 - **Tác động thiết kế:** Áp dụng distributed locking có thời hạn trên Redis hoặc sử dụng atomic conditional update: `UPDATE seats SET status='HELD', hold_user_id=? WHERE id=? AND status='AVAILABLE'`.
 
-#### BR-SEAT-002: Thời hạn giữ ghế tối đa 10 phút (10-Minute Hold TTL)
-- **Tên quy tắc:** Khóa ghế tạm thời có thời hạn 10 phút (Seat Hold Time-To-Live).
-- **Mô tả:** Khi khách hàng chọn ghế thành công, hệ thống khóa giữ ghế đó trong thời gian chính xác 10 phút (600 giây). Đồng hồ đếm ngược được kích hoạt đồng bộ giữa client và server.
+#### BR-SEAT-002: Thời hạn giữ ghế tối đa 5 phút (5-Minute Hold TTL)
+- **Tên quy tắc:** Khóa ghế tạm thời có thời hạn 5 phút (Seat Hold Time-To-Live).
+- **Mô tả:** Khi khách hàng chọn ghế thành công, hệ thống khóa giữ ghế đó trong thời gian chính xác 5 phút (300 giây). Đồng hồ đếm ngược được kích hoạt đồng bộ giữa client và server.
 - **Điều kiện kết thúc giữ ghế:**
   1. Khách hàng hoàn tất thanh toán thành công → Ghế chuyển sang `SOLD`.
   2. Khách hàng chủ động nhấn "Bỏ chọn ghế" → Ghế lập tức hoàn về `AVAILABLE`.
-  3. Quá 10 phút không hoàn tất thanh toán → Hết hạn tự động, ghế hoàn về `AVAILABLE` (`BR-SEAT-003`).
+  3. Quá 5 phút không hoàn tất thanh toán → Hết hạn tự động, ghế hoàn về `AVAILABLE` (`BR-SEAT-003`).
 
 #### BR-SEAT-003: Tự động giải phóng ghế khi hết hạn (Auto-Release on Expiration)
-- **Tên quy tắc:** Tự động trả ghế về trạng thái AVAILABLE khi hết hạn 10 phút.
-- **Mô tả:** Khi hết thời gian 600 giây mà đơn hàng chưa được thanh toán, hệ thống lập tức hủy phiên giữ ghế (`seat.status = AVAILABLE`, xóa `hold_user_id`), đơn hàng liên kết chuyển sang `OUT_TIME`. Ghế được công khai trên sơ đồ để các khách hàng khác tiếp tục chọn.
+- **Tên quy tắc:** Tự động trả ghế về trạng thái AVAILABLE khi hết hạn 5 phút.
+- **Mô tả:** Khi hết thời gian 300 giây mà đơn hàng chưa được thanh toán, hệ thống lập tức hủy phiên giữ ghế (`seat.status = AVAILABLE`, xóa `hold_user_id`), đơn hàng liên kết chuyển sang `OUT_TIME`. Ghế được công khai trên sơ đồ để các khách hàng khác tiếp tục chọn.
 - **Tác động thiết kế:** Cơ chế tự động giải phóng qua Redis Key Expiration (Keyspace notification) kết hợp tác vụ Delayed Job / Scheduler kiểm tra định kỳ mỗi 5 giây.
 
 #### BR-SEAT-004: Giới hạn số lượng ghế chọn tối đa trên mỗi giao dịch (Seat Selection Limit)
@@ -121,6 +127,19 @@ Tài liệu phục vụ làm căn cứ chuẩn xác để:
 - **Tên quy tắc:** Tổng số ghế phải luôn bằng dung lượng phòng hòa nhạc.
 - **Mô tả:** Tại mọi thời điểm: `Total Seats = COUNT(AVAILABLE) + COUNT(HELD) + COUNT(SOLD) + COUNT(BLOCKED)`. Số lượng này phải luôn khớp với sức chứa thiết kế của sơ đồ khán phòng (`venue.capacity`), không được thất thoát hay tự sinh thêm bất kỳ ghế nào.
 
+#### BR-SEAT-009: Thông tin người sử dụng vé bắt buộc (Mandatory Attendee Information)
+- **Tên quy tắc:** Thu thập thông tin người sử dụng vé thực tế.
+- **Mô tả:** Khi người mua vé mua cho nhiều người khác (1 đơn từ 1–4 vé), hệ thống bắt buộc thu thập thông tin từng người sẽ sử dụng vé trong bước checkout, bao gồm:
+  - **Họ tên đầy đủ** (bắt buộc)
+  - **Số điện thoại** (bắt buộc)
+  - **CCCD/CMND** (tùy chọn, nhưng khuyến nghị để kiểm tra danh tính tại cổng)
+- **Quy tắc áp dụng:**
+  - Nếu chỉ mua 1 vé: thông tin mặc định lấy từ tài khoản người mua, có thể chỉnh sửa.
+  - Nếu mua 2–4 vé: bắt buộc nhập thông tin riêng biệt cho từng vé/ghế.
+- **Sử dụng thông tin:** Thông tin người sử dụng vé được in trên vé điện tử và dùng để đối chiếu ngẫu nhiên tại cổng.
+- **Điều kiện chặn:** Không thể hoàn tất checkout nếu thiếu thông tin bắt buộc (họ tên, số điện thoại) của bất kỳ vé nào trong đơn.
+- **Tác động thiết kế:** Bảng `tickets` cần bổ sung các cột `attendee_name` (NOT NULL), `attendee_phone` (NOT NULL), `attendee_id_number` (nullable), tách biệt với `buyer_user_id`. API checkout phải validate đầy đủ thông tin attendee trước khi chấp nhận tạo đơn.
+
 ---
 
 ### 3.3 Phân hệ Đơn hàng & Giới hạn giao dịch (Orders & Limits)
@@ -132,7 +151,7 @@ Tài liệu phục vụ làm căn cứ chuẩn xác để:
 
 #### BR-ORD-002: Thời gian hết hạn của đơn hàng bằng thời gian giữ ghế còn lại
 - **Tên quy tắc:** Order expiration đồng bộ với Seat hold timeout.
-- **Mô tả:** Thời hạn hiệu lực của đơn hàng `PENDING` được tính bằng thời gian còn lại của phiên giữ ghế (tối đa 10 phút kể từ lúc giữ ghế đầu tiên). Khi hết thời gian này, nếu đơn chưa thanh toán, trạng thái tự động chuyển thành `OUT_TIME`.
+- **Mô tả:** Thời hạn hiệu lực của đơn hàng `PENDING` được tính bằng thời gian còn lại của phiên giữ ghế (tối đa 5 phút kể từ lúc giữ ghế đầu tiên). Khi hết thời gian này, nếu đơn chưa thanh toán, trạng thái tự động chuyển thành `OUT_TIME`.
 
 #### BR-ORD-003: Giới hạn tổng số vé hiệu lực trên mỗi tài khoản/concert (Account Purchase Limit)
 - **Tên quy tắc:** Một tài khoản có tối đa 4 vé hiệu lực hoặc đang được giữ cho một concert.
@@ -182,7 +201,7 @@ Tài liệu phục vụ làm căn cứ chuẩn xác để:
 
 #### BR-PAY-004: Thời hạn chuyển hướng thanh toán (Gateway Redirection Timeout)
 - **Tên quy tắc:** Giới hạn thời gian mở cổng thanh toán.
-- **Mô tả:** URL thanh toán do VNPay/MoMo sinh ra chỉ có hiệu lực tối đa bằng thời gian giữ đơn còn lại (dưới 10 phút). Nếu khách hàng không thực hiện thanh toán trước khi phiên hết hạn, cổng thanh toán sẽ từ chối giao dịch.
+- **Mô tả:** URL thanh toán do VNPay/MoMo sinh ra chỉ có hiệu lực tối đa bằng thời gian giữ đơn còn lại (dưới 5 phút). Nếu khách hàng không thực hiện thanh toán trước khi phiên hết hạn, cổng thanh toán sẽ từ chối giao dịch.
 
 #### BR-PAY-005: Ghi vết đầy đủ mọi giao dịch thanh toán (Payment Audit Log)
 - **Tên quy tắc:** Không được xóa hay ghi đè lịch sử giao dịch thanh toán.

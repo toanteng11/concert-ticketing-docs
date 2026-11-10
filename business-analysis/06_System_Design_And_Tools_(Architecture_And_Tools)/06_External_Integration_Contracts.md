@@ -4,9 +4,9 @@
 
 Để hoàn thiện quy trình mua bán vé và chăm sóc khách hàng, hệ thống bắt buộc phải tích hợp với nhiều đối tác dịch vụ bên ngoài (**Third-Party Providers**):
 1. **Cổng thanh toán điện tử:** VNPay và MoMo (Hỗ trợ Thẻ ATM nội địa, Thẻ tín dụng Visa/Mastercard/JCB và Ví điện tử).
-2. **Cổng gửi thư điện tử giao dịch (Transactional Email):** AWS Simple Email Service (SES) hoặc SendGrid.
-3. **Cổng gửi tin nhắn viễn thông (SMS Brandname):** eSMS / FPT Telecom / Twilio.
-4. **Cổng thông báo đẩy ứng dụng di động:** Google Firebase Cloud Messaging (FCM) & Apple Push Notification service (APNs).
+2. **Cổng gửi thư điện tử giao dịch (Transactional Email):** Amazon Simple Email Service (Amazon SES).
+3. **Cổng gửi tin nhắn viễn thông (SMS Brandname):** AWS End User Messaging SMS; sender registration, supported country and production access must be verified.
+4. **Cổng thông báo đẩy ứng dụng di động:** Amazon SNS Mobile Push; APNs/FCM are external delivery platforms connected by SNS.
 
 Tài liệu này đặc tả các hợp đồng giao tiếp kỹ thuật (**Integration Contracts**), thuật toán tạo chữ ký bảo mật, cấu trúc dữ liệu trao đổi và bảng ánh xạ mã lỗi đối tác sang chuẩn mã lỗi nội bộ của hệ thống.
 
@@ -23,10 +23,10 @@ flowchart LR
   end
   vnpay["VNPay"]
   momo["MoMo"]
-  ses["AWS SES / SendGrid"]
+  ses["Amazon SES"]
   sns["AWS SNS feedback"]
-  push["FCM / APNs"]
-  sms["SMS Brandname provider"]
+  push["Amazon SNS Mobile Push → APNs / FCM"]
+  sms["AWS End User Messaging SMS → carrier"]
   payment <-->|create payment, refund, signed IPN| vnpay
   payment <-->|create payment, refund, signed IPN| momo
   notify -->|transactional email| ses
@@ -108,7 +108,7 @@ Hệ thống Backend ghép các tham số truy vấn (Query Parameters) theo b�
 ## 4. Hợp Đồng Tích Hợp Email Giao Dịch (AWS Simple Email Service - SES)
 
 ### 1. Phương Thức Tích Hợp
-- Sử dụng **AWS SDK v3 / SES Client API** (qua HTTPS REST API) thay vì giao thức SMTP truyền thống nhằm giảm độ trễ gửi thư từ $1.5\text{ giây}$ xuống $< 200\text{ ms}$.
+- Sử dụng **AWS SDK for Java 2.x / SES v2 Client API** (qua HTTPS REST API) thay vì giao thức SMTP truyền thống nhằm giảm độ trễ gửi thư từ $1.5\text{ giây}$ xuống $< 200\text{ ms}$.
 - Địa chỉ người gửi chính thức (Sender Identity): `ve@ticketplatform.vn` đã được xác thực toàn diện bản ghi **SPF**, **DKIM** (2048-bit) và **DMARC** (`p=reject`) để tránh tuyệt đối việc thư rơi vào hộp thư rác (Spam/Junk Box).
 
 ### 2. Xử Lý Phản Hồi Sự Cố Email Qua Webhook AWS SNS

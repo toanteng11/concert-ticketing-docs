@@ -176,7 +176,7 @@ Các giá trị pool trên chỉ để minh họa. Mỗi application instance c�
 
 ```mermaid
 flowchart LR
-  read["Eligible read request"] --> cache{"Redis cache hit?"}
+  read["Eligible read request"] --> cache{"ElastiCache cache hit?"}
   cache -->|yes| response["Return cached result"]
   cache -->|no| route{"Read-your-write window?"}
   route -->|within 5s| primary[("SQL Server Primary")]
@@ -245,17 +245,17 @@ public OrderDto getOrder(Long orderId, Long authenticatedUserId) {
 
 ### 5.4. Tường Lửa & Chống DDoS (WAF & Rate Limiting)
 
-- **Cloudflare WAF** tuyến đầu — lọc OWASP Top 10, chặn scanner tự động.
-- **API Gateway Rate Limit** — Redis INCR + EXPIRE: > 120 req/phút/IP → 429 Too Many Requests.
-- **Cloudflare Turnstile CAPTCHA** — kích hoạt khi phát hiện hành vi bot trước khi vào hàng chờ.
+- **AWS WAF on CloudFront with managed rule groups and rate-based rules** tuyến đầu — lọc OWASP Top 10, chặn scanner tự động.
+- **AWS WAF + rate limits nghiệp vụ:** WAF rate-based rules bảo vệ edge theo IP/aggregation key; Spring Boot kiểm tra queue token và giới hạn user/concert. Dùng ElastiCache counters khi cần chia sẻ bộ đếm giữa app replicas; chỉ trả 429 khi response rule được cấu hình, nếu không WAF block response theo cấu hình.
+- **AWS WAF Bot Control / Challenge / CAPTCHA (optional paid features)** — kích hoạt khi phát hiện hành vi bot trước khi vào hàng chờ.
 
 <!-- BEGIN MERMAID DIAGRAM NFR-SECURITY-PATH -->
 ### Đường đi xác thực và bảo vệ dữ liệu
 
 ```mermaid
 flowchart LR
-  client["Client"] --> tls["HTTPS / TLS"] --> gateway["Gateway<br/>rate limit and request validation"]
-  gateway --> route{"Public or protected endpoint?"}
+  client["Client"] --> edge["CloudFront + AWS WAF"] --> alb["AWS ALB"] --> app["Spring Boot API<br/>JWT/RBAC/rate policy"]
+  app --> route{"Public or protected endpoint?"}
   route -->|public| service["Application service"]
   route -->|protected| token["Validate JWT signature / expiry"]
   token --> valid{"Token valid?"}

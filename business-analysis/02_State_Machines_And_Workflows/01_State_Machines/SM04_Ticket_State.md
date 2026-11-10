@@ -17,7 +17,7 @@ Tài liệu mô tả toàn bộ vòng đời trạng thái của một **Vé Đi
 
 | Mã trạng thái | Tên hiển thị | Mô tả |
 |---|---|---|
-| `ORDERED` | Đã phát hành | Vé được tạo sau khi thanh toán thành công; mã QR hoạt động; chủ vé có thể xem và trình QR |
+| `ORDERED` | Đã phát hành | Vé được tạo sau khi thanh toán thành công; mã QR hoạt động; chủ vé có thể xem và trình QR. Vé chứa cả thông tin **người mua** (`buyer_user_id`) lẫn **người sử dụng vé** (`attendee_name`, `attendee_phone`, `attendee_id_number`) — hai vai trò có thể là hai người khác nhau |
 | `CHECKED` | Đã check-in | Mã QR đã được quét thành công tại cổng sự kiện; vé đã sử dụng; không thể check-in lại |
 | `CANCELLED` | Đã hủy | Vé bị hủy do đơn hàng được hoàn tiền hoặc concert bị hủy; mã QR vô hiệu hóa ngay lập tức |
 | `EXPIRED_UNATTENDED` | Hết hạn - Không tham dự | Concert đã hoàn thành nhưng vé không được quét (Chủ vé vắng mặt) |
@@ -134,4 +134,5 @@ Khi mạng phục hồi, staff thực hiện scan lại. Scan ID/idempotency key
 | **INV-TCK-03** | Khi vé `CANCELLED`, mã QR phải bị vô hiệu hóa tức thì — server từ chối toàn bộ token JWT của vé này ngay cả khi JWT chưa hết hạn `exp`. |
 | **INV-TCK-04** | Không thể phục hồi vé từ trạng thái `CANCELLED` hoặc `CHECKED` sang `ORDERED`. |
 | **INV-TCK-05** | Một `order.status = PAID` luôn có số lượng vé `ORDERED` bằng đúng số ghế trong đơn hàng (1 ghế = 1 vé). |
+| **INV-TCK-06** | Mỗi vé phải có `attendee_name` (NOT NULL) và `attendee_phone` (NOT NULL) — là thông tin người sẽ sử dụng vé thực tế. `attendee_id_number` (CCCD) là tùy chọn. `buyer_user_id` chỉ định người mua/thanh toán, có thể khác `attendee_*`. Vé điện tử và QR hiển thị tên người sử dụng, không phải tên người mua. |
 

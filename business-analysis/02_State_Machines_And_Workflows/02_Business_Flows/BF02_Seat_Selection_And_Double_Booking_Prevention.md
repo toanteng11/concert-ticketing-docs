@@ -1,4 +1,4 @@
-﻿# BF02 — Business Flow: Chọn Ghế & Ngăn Chặn Double-Booking (Seat Selection & Double-Booking Prevention)
+# BF02 — Business Flow: Chọn Ghế & Ngăn Chặn Double-Booking (Seat Selection & Double-Booking Prevention)
 
 ## 1. Mục Đích
 
@@ -62,7 +62,7 @@ sequenceDiagram
     actor C as Khách hàng (Người dùng A)
     participant APP as Web App
     participant API as Seat Hold API
-    participant REDIS as Redis Cluster
+    participant REDIS as Amazon ElastiCache for Redis OSS
     participant DB as Database
     participant WS as WebSocket Server
 
@@ -71,7 +71,7 @@ sequenceDiagram
 
     Note over API: Xác thực đồng thời:<br/>1. JWT hợp lệ<br/>2. X-Queue-Token còn TTL<br/>3. Số ghế trong request ≤ giới hạn
 
-    API->>REDIS: SET lock:seat:A12 {user_id} NX EX 600
+    API->>REDIS: SET lock:seat:A12 {user_id} NX EX 300
     Note over REDIS: Atomic SET: Chỉ thành công<br/>nếu key chưa tồn tại (NX)
 
     alt Redis lock thành công
@@ -84,8 +84,8 @@ sequenceDiagram
             DB-->>API: 1 row updated
             API->>WS: Publish SeatHeldEvent:\n{concert_id, seat_id:"A12", new_status:"HELD"}
             WS-->>APP: Broadcast tới tất cả user đang xem sơ đồ ghế
-            API-->>APP: 200 OK\n{held_seats: [{seat_id:"A12", zone:"VIP", price:2000000}],\n expires_in: 600}
-            APP-->>C: Ghế A12 đổi màu vàng trên sơ đồ\n"Đã giữ ghế A12 — còn 10:00 phút"
+            API-->>APP: 200 OK\n{held_seats: [{seat_id:"A12", zone:"VIP", price:2000000}],\n expires_in: 300}
+            APP-->>C: Ghế A12 đổi màu vàng trên sơ đồ\n"Đã giữ ghế A12 — còn 05:00 phút"
         else DB update thất bại (0 rows — version conflict)
             DB-->>API: 0 rows updated
             API->>REDIS: DEL lock:seat:A12 (dọn dẹp lock bị lỗi)
@@ -127,7 +127,7 @@ sequenceDiagram
     actor C as Khách hàng
     participant APP as Web App
     participant API as Seat Hold API
-    participant REDIS as Redis
+    participant REDIS as Amazon ElastiCache for Redis OSS
     participant DB as Database
     participant WS as WebSocket Server
 
@@ -156,11 +156,11 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    A["Khách hàng giữ ghế A12\nRedis key: lock:seat:A12\nTTL = 600 giây"] --> B{{"600 giây đã trôi qua?"}}
+    A["Khách hàng giữ ghế A12\nRedis key: lock:seat:A12\nTTL = 300 giây (5 phút)"] --> B{{"300 giây đã trôi qua?"}}
 
     B -->|Khách hàng đã thanh toán trước| C["Thanh toán IPN thành công\n→ seat.status = SOLD\nDEL lock:seat:A12 (xóa chủ động)"]
 
-    B -->|Hết 600s, chưa thanh toán| D["Redis Keyspace Notification:\nkey lock:seat:A12 EXPIRED"]
+    B -->|Hết 300s, chưa thanh toán| D["Redis Keyspace Notification:\nkey lock:seat:A12 EXPIRED"]
 
     D --> E["Seat Release Worker nhận event"]
     E --> F["UPDATE seats SET status='AVAILABLE',\nhold_user_id=NULL\nWHERE id=seat_id AND status='HELD'\nAND hold_user_id=expired_user_id"]

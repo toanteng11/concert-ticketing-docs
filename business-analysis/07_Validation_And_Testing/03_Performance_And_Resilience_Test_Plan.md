@@ -7,9 +7,9 @@
 ## 1. Giới Thiệu & Mục Tiêu Thử Nghiệm
 
 Mục tiêu của kế hoạch kiểm thử hiệu năng và khả năng phục hồi (**Performance & Resilience Testing Plan**):
-1. **Kiểm chứng khả năng chịu tải $100.000\text{ CCU}$:** Đảm bảo hệ sinh thái hạ tầng đám mây (Kubernetes, Redis Cluster, RabbitMQ (D-025), SQL Server, Kong Gateway) vận hành mượt mà, không sập nguồn khi bước vào giờ mở bán vé sự kiện quy mô lớn.
+1. **Kiểm chứng khả năng chịu tải $100.000\text{ CCU}$:** Đảm bảo hệ sinh thái hạ tầng đám mây (Amazon EKS, ElastiCache for Redis OSS, Amazon MQ for RabbitMQ (D-025/D-035), SQL Server trên EC2 và ALB) vận hành mượt mà, không sập nguồn khi bước vào giờ mở bán vé sự kiện quy mô lớn.
 2. **Đo lường độ trễ chuẩn hóa (Latency Benchmarking):** Xác minh các chỉ số độ trễ P50, P95, P99 đạt đúng cam kết mục tiêu trong tài liệu SLO/SLA (P99 $< 150\text{ ms}$ cho hàng chờ, $< 350\text{ ms}$ cho giữ ghế).
-3. **Thực nghiệm kỹ thuật hỗn loạn (Chaos Engineering):** Chủ động đánh sập các thành phần phần cứng/dịch vụ quan trọng (Redis Master, SQL Server Primary, Cổng thanh toán) để kiểm chứng khả năng tự phục hồi (Self-Healing) và đảm bảo **Tuyệt đối không bán trùng ghế trong mọi tình huống sự cố**.
+3. **Thực nghiệm kỹ thuật phục hồi:** Diễn tập failover được AWS hỗ trợ cho ElastiCache/Amazon MQ trong môi trường kiểm thử, lỗi SQL Server Primary và timeout cổng thanh toán; Chaos Mesh/Gremlin chỉ dùng cho EKS/EC2 workloads theo phạm vi cho phép. Chứng minh không bán trùng ghế và ghi lại số đo thực tế.
 
 ---
 
@@ -18,7 +18,7 @@ Mục tiêu của kế hoạch kiểm thử hiệu năng và khả năng phục 
 - **Môi trường:** Staging Dedicated Performance Cluster (Cách ly hoàn toàn với môi trường Development).
 - **Hạ tầng cụm máy chủ:** Cấu hình SQL Server và broker theo topology đã chốt; Topology baseline được ghi tại D-025/D-026; sizing và licensing vẫn là cổng DBA/Finance D-030, chưa được xem là đã nghiệm thu.
 - **Công cụ phát tải phân tán (Distributed Load Generators):**
-  - Cụm máy chủ tạo tải gồm 10 máy ảo độc lập chạy công cụ **k6 (Grafana)** và **Locust**.
+  - Cụm máy chủ tạo tải gồm 10 máy ảo độc lập chạy công cụ mã nguồn mở **k6** và **Locust**.
   - Băng thông mạng máy phát tải: Đạt tối thiểu $10\text{ Gbps}$ ra vào Internet để không bị nghẽn cổ chai tại máy test.
 - **Công cụ tiêm sự cố hỗn loạn (Fault Injection):** Sử dụng **Chaos Mesh** cài đặt trực tiếp trong cụm Kubernetes.
 
@@ -54,13 +54,15 @@ Hệ thống được kiểm thử qua 4 bài kiểm tra tải tiêu chuẩn:
 
 | Mã | Thành phần bị tấn công | Kịch bản tiêm lỗi hỗn loạn (Fault Injection) | Hành vi dự kiến của hệ thống | Tiêu chuẩn nghiệm thu phục hồi |
 |---|---|---|---|---|
-| **RT-001** | **Sập Node Redis Master** | Dùng Chaos Mesh tiêu diệt (Kill Pod) đột ngột node Redis Master đang giữ khóa ghế của Zone Hot nhất | Cụm Redis tự động bầu cử Replica lên làm Master trong vòng 3 giây; SQL Server bảo vệ chốt chặn cuối | **Không bán trùng ghế nào**; Hệ thống trở lại bình thường trong $< 5\text{ giây}$ |
+| **RT-001** | **Amazon ElastiCache failover** | Thực hiện failover được AWS hỗ trợ trong môi trường kiểm thử; tạo đồng thời request queue/seat-hold và theo dõi retry/timeout | ElastiCache phục hồi theo topology đã cấu hình; SQL Server vẫn là nguồn quyết định cuối; app từ chối an toàn khi trạng thái chưa xác minh | Không double-booking; đo và lưu thời gian gián đoạn, lỗi, mất cache và thời gian ổn định lại; đặt ngưỡng nghiệm thu sau benchmark, không giả định mốc vài giây |
 | **RT-002** | **Sập SQL Server Primary** | Ép tắt SQL Server Primary trong lúc có 50 transaction thanh toán | Quan sát failover/reconnect theo SQL Server Always On AG D-026; xác nhận endpoint và connection pool | Đo local RPO/RTO (mục tiêu 0/≤5 phút) và DR RPO/RTO (≤5/≤60 phút); kiểm tra dữ liệu COMMIT; lưu số đo và runbook evidence; chưa coi mục tiêu là đã nghiệm thu trước khi diễn tập |
 | **RT-003** | **Chậm mạng Cổng Thanh Toán** | Tiêm độ trễ mạng thêm $3.000\text{ ms}$ vào mọi kết nối gọi ra ngoài VNPay | Circuit Breaker chuyển sang trạng thái `OPEN` sau 20 request bị chậm; Tự động kích hoạt Fallback | Thread pool không bị cạn kiệt; Khách hàng được chuyển hướng sang cổng MoMo mượt mà |
-| **RT-004** | **Sập broker đã chọn** | Tiêm lỗi RabbitMQ theo topology triển khai | Xác nhận durable message được phục hồi/re-delivered; consumer idempotent không tạo tác động trùng | Không mất mát bất kỳ tin nhắn sự kiện nào (Zero Message Loss) |
+| **RT-004** | **Amazon MQ for RabbitMQ failover** | Tiêm lỗi/diễn tập failover theo topology Amazon MQ đã chọn | Xác nhận durable message được phục hồi/re-delivered; consumer idempotent không tạo tác động trùng | Đối soát outbox với message được xử lý; ghi nhận mất mát, lag, DLQ và thời gian phục hồi; không cam kết zero loss nếu chưa chứng minh bằng diễn tập |
 | **RT-005** | **Mất mạng cổng soát vé** | Cắt toàn bộ mạng tới scanner tại Cổng A | Scanner báo lỗi kết nối; không xác nhận vé, không chuyển ticket sang CHECKED, không chấp nhận cache/JWT đơn lẻ | Khi mạng phục hồi, scan lại idempotent; log sự cố được giữ và không có check-in offline theo D-023 |
 | **RT-006** | **Chết Pod Backend giữa chừng** | Kill Pod của `Order Service` đúng lúc đang xử lý lưu đơn hàng | Kubernetes tự động khởi động Pod mới (Self-healing); Client gửi lại request với cùng `Idempotency-Key` | Không phát sinh đơn hàng trùng lặp; Giao dịch hoàn tất thành công sau khi retry |
-
+| **RT-007** | **SQL Server PITR từ S3** | Chọn recovery point đã replicate; dựng SQL Server EC2 cô lập; restore FULL/DIFF/LOG tới STOPAT | Không restore đè nguồn lỗi; thiếu log thì dừng ở thời điểm gần nhất có chain đầy đủ; kiểm tra payment UNKNOWN trước cutover | Đạt checksum, DBCC CHECKDB và business invariants; ghi backup RPO và thời gian restore; so với mục tiêu đề xuất RPO ≤30 phút/RTO ≤4 giờ, chưa coi là đạt trước khi ký |
+| **RT-008** | **S3 backup replication trễ/lỗi** | Tạm chặn quyền/đường replication trong staging hoặc dùng failure injection an toàn; theo dõi object pending/failed | CloudWatch/SNS cảnh báo; không đánh dấu recovery point ở DR là sẵn sàng nếu chưa `COMPLETED`; không xóa bản nguồn | Phát hiện và phục hồi replication theo runbook; đo tuổi log đã replicate và xác nhận backup-based RPO |
+| **RT-009** | **AWS Backup VSS EC2/EBS restore** | Chạy Restore Testing cho recovery point Windows/SQL EC2; dựng máy vào subnet cô lập | VSS snapshot được restore mà không thay thế host/evidence hiện hữu; volume mapping đúng; SQL service/database khởi động | Xác minh SQL VSS Writer, DBCC CHECKDB, KMS decrypt, RTO đo được và biên bản restore test |
 <!-- BEGIN MERMAID DIAGRAM TEST-PERF-RESILIENCE -->
 ### Vòng kiểm thử tải và phục hồi
 
@@ -69,7 +71,7 @@ flowchart LR
   env["Dedicated Staging performance cluster<br/>load generators + monitoring"]
   profiles["Run defined profiles<br/>baseline, stress, spike, soak"]
   scenarios["Run critical performance cases<br/>queue, seat hold, payment, QR, expiry"]
-  chaos["Inject failure scenarios<br/>Redis, SQL, gateway, broker, backend pod"]
+  chaos["Inject failure scenarios<br/>ElastiCache, SQL AG, ALB/app, Amazon MQ, EKS pod"]
   measure["Collect latency, throughput, error rate,<br/>double-booking and recovery evidence"]
   gate{"All Go-Live exit criteria met?"}
   ready["Submit evidence for technical sign-off"]
@@ -92,6 +94,5 @@ Hệ thống chỉ được phép chuyển từ môi trường Staging sang Prod
    - Hàng chờ ảo: P99 Latency $< 150\text{ ms}$.
    - Khóa giữ ghế: P99 Latency $< 350\text{ ms}$.
    - Soát vé tại cổng: Phản hồi máy quét $\le 500\text{ ms}$.
-4. **Độ ổn định khi phục hồi:** Chạy RT-001 đến RT-006 trên topology production-like; lưu số đo, dữ liệu commit và runbook evidence. So sánh kết quả với mục tiêu D-026 (local RPO 0/RTO ≤5 phút; DR RPO ≤5 phút/RTO ≤60 phút). Đây là release gate, chưa được xem là đạt trước khi có diễn tập.
+4. **Độ ổn định khi phục hồi:** Chạy RT-001 đến RT-009 trên topology production-like; lưu số đo, dữ liệu commit và runbook evidence. So sánh HA/DR AG với D-026 (local RPO 0/RTO ≤5 phút; DR RPO ≤5 phút/RTO ≤60 phút), đồng thời đo riêng SQL PITR backup fallback (mục tiêu khởi điểm RPO ≤30 phút/RTO ≤4 giờ) và AWS Backup VSS restore. Các target chưa được xem là đạt trước khi có diễn tập và DBA/SRE sign-off.
 5. **Ký duyệt biên bản:** Báo cáo kiểm thử tải được Trưởng nhóm Kiến trúc Hệ thống (Lead Architect), Trưởng nhóm SRE và Quản lý Dự án (Project Manager) cùng ký xác nhận nghiệm thu.
-

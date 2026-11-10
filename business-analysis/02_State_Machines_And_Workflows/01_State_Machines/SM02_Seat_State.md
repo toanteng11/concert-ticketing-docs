@@ -1,4 +1,4 @@
-﻿# SM02 — State Machine: Seat (Trạng Thái Ghế Ngồi)
+# SM02 — State Machine: Seat (Trạng Thái Ghế Ngồi)
 
 ## 1. Mục Đích
 
@@ -15,7 +15,7 @@ Tài liệu mô tả toàn bộ vòng đời trạng thái của một **Ghế n
 | Mã trạng thái | Tên hiển thị | Màu sắc sơ đồ | Mô tả |
 |---|---|---|---|
 | `AVAILABLE` | Trống / Có thể chọn | 🟢 Xanh lá | Ghế chưa được ai chọn, hiển thị cho khách hàng tương tác |
-| `HELD` | Đang được giữ | 🟡 Vàng | Có khách đang giữ; khóa tối đa 10 phút; chỉ 1 người tại 1 thời điểm |
+| `HELD` | Đang được giữ | 🟡 Vàng | Có khách đang giữ; khóa tối đa **5 phút (300 giây)**; chỉ 1 người tại 1 thời điểm |
 | `SOLD` | Đã bán | 🔴 Đỏ | Đơn hàng đã thanh toán thành công; ghế thuộc về khách hàng |
 | `BLOCKED` | Bị khóa (kỹ thuật) | ⬛ Xám đậm | Khóa bởi Organizer/Admin (ghế VIP dành riêng, hỏng hóc, che khuất tầm nhìn) |
 
@@ -29,7 +29,7 @@ stateDiagram-v2
 
     AVAILABLE --> HELD : Khách hàng chọn ghế\n[Guard: user có Queue Access Token hợp lệ\nVÀ seat.status = AVAILABLE\nVÀ Redis lock thành công (atomic)]
 
-    HELD --> AVAILABLE : 1. Hết thời hạn giữ 10 phút (Redis TTL expired)\n2. Khách hàng chủ động bỏ chọn ghế\n3. Đơn hàng chuyển OUT_TIME hoặc CANCELLED
+    HELD --> AVAILABLE : 1. Hết thời hạn giữ 5 phút (Redis TTL expired)\n2. Khách hàng chủ động bỏ chọn ghế\n3. Đơn hàng chuyển OUT_TIME hoặc CANCELLED
 
     HELD --> SOLD : Thanh toán thành công\n[IPN Webhook xác thực → order.status = PAID]
 
@@ -48,8 +48,8 @@ stateDiagram-v2
 
 | # | Trạng thái hiện tại | Event / Trigger | Guard Condition | Trạng thái kế tiếp | Actor | BR liên quan |
 |---|---|---|---|---|---|---|
-| T-01 | `AVAILABLE` | Khách hàng gọi API chọn ghế `POST /seats/{id}/hold` | (1) `seat.status = AVAILABLE`; (2) User có `X-Queue-Token` hợp lệ còn hiệu lực; (3) Redis `SET NX EX 600` (atomic lock) thành công; (4) Số ghế đang hold của user < giới hạn concert (mặc định 4) | `HELD` | Customer | BR-SEAT-001, BR-SEAT-004, BR-QUEUE-008 |
-| T-02 | `HELD` | Đến hạn hold sau 600 giây | `SYSUTCDATETIME() >= seat.hold_expires_at`; scheduler/reconciler kiểm tra SQL Server. Redis keyspace notification chỉ là tín hiệu đánh thức, không phải nguồn đảm bảo | `AVAILABLE` | System (Auto-release) | BR-SEAT-002, BR-SEAT-003 |
+| T-01 | `AVAILABLE` | Khách hàng gọi API chọn ghế `POST /seats/{id}/hold` | (1) `seat.status = AVAILABLE`; (2) User có `X-Queue-Token` hợp lệ còn hiệu lực; (3) Redis `SET NX EX 300` (atomic lock) thành công; (4) Số ghế đang hold của user < giới hạn concert (mặc định 4) | `HELD` | Customer | BR-SEAT-001, BR-SEAT-004, BR-QUEUE-008 |
+| T-02 | `HELD` | Đến hạn hold sau 300 giây | `SYSUTCDATETIME() >= seat.hold_expires_at`; scheduler/reconciler kiểm tra SQL Server. Redis keyspace notification chỉ là tín hiệu đánh thức, không phải nguồn đảm bảo | `AVAILABLE` | System (Auto-release) | BR-SEAT-002, BR-SEAT-003 |
 | T-03 | `HELD` | Khách hàng gọi API bỏ chọn ghế `DELETE /seats/{id}/hold` | `seat.hold_user_id = current_user_id` (chỉ người đang giữ mới được bỏ) | `AVAILABLE` | Customer | BR-SEAT-002 |
 | T-04 | `HELD` | Đơn hàng liên kết chuyển sang `OUT_TIME` | Worker xử lý khi `SYSUTCDATETIME() >= order.expires_at` và order còn `PENDING` → giải phóng đúng hold group | `AVAILABLE` | System (Auto-release) | BR-SEAT-003, BR-ORD-002 |
 | T-05 | `HELD` | Đơn hàng liên kết bị `CANCELLED` bởi khách hàng | `order.status = CANCELLED` được cập nhật; Service phát `OrderCancelledEvent` | `AVAILABLE` | System (Event-driven) | BR-ORD-007 |
@@ -69,7 +69,7 @@ sequenceDiagram
     participant U1 as User A (Người dùng 1)
     participant U2 as User B (Người dùng 2)
     participant API as Seat Hold API
-    participant Redis as Redis Cluster (Distributed Lock)
+    participant Redis as Amazon ElastiCache for Redis OSS (Distributed Lock)
     participant DB as Database (seats table)
 
     Note over U1,U2: Cả 2 user cùng nhìn thấy ghế A12 ở trạng thái AVAILABLE
@@ -79,17 +79,17 @@ sequenceDiagram
         U2->>API: POST /seats/A12/hold
     end
 
-    API->>Redis: SET lock:seat:A12 user_A NX EX 600
+    API->>Redis: SET lock:seat:A12 user_A NX EX 300
     Note over Redis: User A đến trước 1ms → Lock thành công
     Redis-->>API: OK (User A giành được lock)
 
     API->>DB: UPDATE seats SET status='HELD', hold_user_id='user_A' WHERE id='A12' AND status='AVAILABLE'
     DB-->>API: 1 row updated ✅
 
-    API-->>U1: 200 OK — Ghế A12 đã được giữ cho bạn (còn 10:00 phút)
+    API-->>U1: 200 OK — Ghế A12 đã được giữ cho bạn (còn 05:00 phút)
 
     Note over Redis: User B cố gắng lock cùng key
-    API->>Redis: SET lock:seat:A12 user_B NX EX 600
+    API->>Redis: SET lock:seat:A12 user_B NX EX 300
     Redis-->>API: NIL (Lock đã tồn tại — User A đang giữ)
     API-->>U2: 409 CONFLICT — {"error":"SEAT_ALREADY_HELD","code":"BR-SEAT-001","message":"Ghế A12 đã được người khác chọn"}
 ```
@@ -100,10 +100,10 @@ Hệ thống áp dụng **2 lớp bảo vệ** để đảm bảo Zero Double-Bo
 
 1. **Tầng Redis — Distributed Lock (Tầng 1 — Tốc độ cao):**
    ```
-   SET lock:seat:{seat_id} {user_id} NX EX 600
+   SET lock:seat:{seat_id} {user_id} NX EX 300
    ```
    - `NX`: Chỉ set nếu key chưa tồn tại (atomic operation).
-   - `EX 600`: Tự hết hạn sau 600 giây.
+   - `EX 300`: Tự hết hạn sau 300 giây (5 phút).
    - Đây là tầng check đầu tiên, phản hồi < 5ms.
 
 2. **Tầng Database — Optimistic Lock/Conditional Update (Tầng 2 — Độ bền):**
@@ -112,7 +112,7 @@ Hệ thống áp dụng **2 lớp bảo vệ** để đảm bảo Zero Double-Bo
    SET status = 'HELD',
        hold_user_id = :user_id,
        hold_started_at = SYSUTCDATETIME(),
-       hold_expires_at = DATEADD(SECOND, 600, SYSUTCDATETIME()),
+       hold_expires_at = DATEADD(SECOND, 300, SYSUTCDATETIME()),
        version = version + 1
    WHERE id = :seat_id
      AND status = 'AVAILABLE'
@@ -126,13 +126,13 @@ Hệ thống áp dụng **2 lớp bảo vệ** để đảm bảo Zero Double-Bo
 
 ```mermaid
 flowchart LR
-    A["Khách hàng giữ ghế\n seat.status = HELD\n Redis key TTL = 600s"] --> B{{"Sau 600 giây?"}}
+    A["Khách hàng giữ ghế\n seat.status = HELD\n Redis key TTL = 300s"] --> B{{"Sau 300 giây?"}}
     B -->|Ghế chưa được thanh toán| C["Redis Keyspace Notification:\n__keyevent@0__:expired"]
     C --> D["Seat Release Worker / Reconciler\n(SQL expiry scan is authoritative; Redis event is best-effort wake-up)"]
     D --> E["UPDATE seats SET status='AVAILABLE'\nWHERE id = seat_id AND status = 'HELD'\nAND hold_user_id = expired_user_id"]
     D --> F["UPDATE orders SET status='OUT_TIME'\nWHERE expires_at <= SYSUTCDATETIME() AND status = 'PENDING'"]
     D --> G["Publish SeatReleasedEvent\n→ WebSocket broadcast\n→ Cập nhật sơ đồ ghế real-time"]
-    B -->|Thanh toán thành công trước 600s| H["seat.status = SOLD\n(Redis key xóa chủ động)"]
+    B -->|Thanh toán thành công trước 300s| H["seat.status = SOLD\n(Redis key xóa chủ động)"]
 ```
 
 ---

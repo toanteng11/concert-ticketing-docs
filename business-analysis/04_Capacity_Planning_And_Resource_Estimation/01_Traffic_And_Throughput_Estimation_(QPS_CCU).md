@@ -47,11 +47,11 @@ Trong thời điểm mở bán cao điểm ($100.000\text{ CCU}$), lưu lượng
 |---|---|---|---|---|---|---|
 | `/api/v1/queue/status` | GET | Khách hàng trong phòng chờ polling lấy vị trí thứ tự | $\frac{95.000\text{ user chờ}}{3\text{ giây}}$ | **31.667 QPS** | **38.000 QPS** | Redis Sorted Set + Edge Caching / Short-polling token |
 | `/api/v1/concerts/{id}/seat-map` | GET | Tải cấu trúc sơ đồ ghế & trạng thái ghế | $\frac{5.000\text{ user chọn}}{5\text{ giây}}$ | **1.000 QPS** | **2.500 QPS** | CDN Caching (cấu trúc tĩnh SVG) + WebSocket/SSE (trạng thái động) |
-| `/api/v1/seats/hold` | POST | Giữ ghế (Distributed Lock) | $5.000\text{ user} \times 0.2\text{ click/s}$ | **1.000 TPS** | **3.000 TPS** | Redis Cluster (`SETNX` + Lua Script) + message broker queue |
+| `/api/v1/seats/hold` | POST | Giữ ghế (Distributed Lock) | $5.000\text{ user} \times 0.2\text{ click/s}$ | **1.000 TPS** | **3.000 TPS** | Amazon ElastiCache for Redis OSS (`SETNX` + Lua Script) + Amazon MQ for RabbitMQ |
 | `/api/v1/orders/checkout` | POST | Xác nhận đặt vé & tạo mã thanh toán | $\frac{50.000\text{ vé}}{4\text{ vé/đơn}} \div (15\text{ phút} \times 60)$ | **14 TPS** | **50 – 100 TPS** | RDBMS Master Write + Transaction Isolation |
 | `/api/v1/payments/ipn` | POST | Webhook nhận kết quả từ VNPay / MoMo | Khớp với tốc độ thanh toán của khách | **14 – 25 TPS** | **60 TPS** | Idempotency Key Filter + Async Event-Driven Worker |
 | `/api/v1/tickets/check-in` | POST | Quét QR tại cổng vào sân vận động | $\frac{50.000\text{ lượt}}{7.200\text{ giây}}$ | **7 – 15 TPS** | **80 – 100 TPS** | Online validation; atomic DB transition; Redis chỉ là tối ưu, không xác thực offline |
-| `/api/v1/concerts/search` | GET | Tìm kiếm và xem thông tin concert | Lưu lượng khách vãng lai | **200 QPS** | **500 QPS** | Elasticsearch Cluster + Redis Cache Layer |
+| `/api/v1/concerts/search` | GET | Tìm kiếm và xem thông tin concert | Lưu lượng khách vãng lai | **200 QPS** | **500 QPS** | SQL Server full-text/indexed search + Redis cache (baseline; validate query plan under load) |
 
 ---
 
@@ -79,8 +79,8 @@ Trong khu vực chọn ghế ($5.000\text{ CCU}$ hoạt động đồng thời):
 - Mỗi người dùng cố gắng nhấp chọn từ 1 đến 4 ghế trong những giây đầu tiên.
 - **Tần suất tranh chấp ghế (Contention Rate):** Tại các khu vực hot (VIP 1, VIP 2 sát sân khấu với khoảng 500 ghế), có tới $3.000$ người cùng nhấp chọn đồng thời.
 - **Yêu cầu xử lý khóa (Lock Operations):**
-  - Hệ thống sử dụng Redis Cluster chạy Lua Script nguyên tử để xử lý `SET lock:seat:{id} {user_id} NX EX 600`.
-  - Redis Cluster với 3 Master nodes có thể dễ dàng đáp ứng thông lượng **100.000 ops/second**, do đó mức tải $3.000\text{ TPS}$ ghi khóa ghế hoàn toàn nằm trong ngưỡng an toàn cao ($< 5\%$ công suất tối đa của Redis).
+  - Hệ thống sử dụng Amazon ElastiCache for Redis OSS chạy Lua Script nguyên tử để xử lý `SET lock:seat:{id} {user_id} NX EX 600`.
+  - Không dùng thông lượng quảng cáo chung để kết luận năng lực ElastiCache. Mức tải khóa ghế, queue polling và failover phải được benchmark trên node class/topology AWS đã chọn; đặt ngưỡng theo latency/error/eviction và xác nhận quota.
 
 ---
 
@@ -101,7 +101,7 @@ Trong khu vực chọn ghế ($5.000\text{ CCU}$ hoạt động đồng thời):
 ```mermaid
 flowchart LR
   ordinary["Ngày thường<br/>read/write khoảng 95:5"] --> catalog["Browse / search / tra cứu"]
-  sale["Flash sale benchmark<br/>100,000 CCU"] --> edge["CDN / API Gateway"]
+  sale["Flash sale benchmark<br/>100,000 CCU"] --> edge["Route 53 / CloudFront / AWS WAF / ALB"]
   edge --> queue["Virtual queue<br/>tối đa 95,000 người chờ trong kịch bản"]
   queue --> admission["Admission control<br/>tối đa 5,000 CCU chọn ghế"]
   admission --> booking["Seat map, giữ ghế, checkout"]
@@ -119,7 +119,7 @@ flowchart LR
 
 ## 8. Chiến Lược Giới Hạn Tải & Bảo Vệ Hệ Thống (Rate Limiting & Shedding)
 
-Để hỗ trợ SLO 99.95% mỗi tháng cho critical first-party purchase APIs theo D-027, các ngưỡng giới hạn (Rate Limits) được cấu hình tại API Gateway:
+Để hỗ trợ SLO 99.95% mỗi tháng cho critical first-party purchase APIs theo D-027, ngưỡng được triển khai tại AWS WAF (rate-based rules theo IP/aggregation key) và trong Spring Boot (user/concert/token limits); ALB chỉ định tuyến, không thay API management layer:
 
 | Đối tượng áp dụng | Ngưỡng giới hạn (Rate Limit) | Thuật toán áp dụng | Hành vi khi vượt ngưỡng |
 |---|---|---|---|

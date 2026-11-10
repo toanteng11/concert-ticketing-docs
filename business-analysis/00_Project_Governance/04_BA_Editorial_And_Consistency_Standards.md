@@ -34,4 +34,4 @@ Khi cập nhật yêu cầu, cập nhật đồng bộ quy tắc, use case/flow/
 
 ## Điểm cần xác nhận
 
-Danh sách câu hỏi và trạng thái được quản lý trong Decision Log. Các quyết định baseline đã chốt gồm giữ ghế 600 giây, payment/refund reconciliation, phạm vi online-only check-in, mốc hoàn tiền theo ngày địa phương, RabbitMQ, SQL Server 2025 Enterprise HA/DR, SLO 99.95%, không partition/NoSQL, release gate 100.000 CCU và loại voucher khỏi baseline. Các mục còn cần xác nhận bên ngoài được ghi rõ là điều kiện go-live, không phải quyết định nghiệp vụ còn mở.
+Danh sách câu hỏi và trạng thái được quản lý trong Decision Log. Các quyết định baseline đã chốt gồm giữ ghế 600 giây, payment/refund reconciliation, phạm vi online-only check-in, mốc hoàn tiền theo ngày địa phương, Amazon MQ for RabbitMQ, SQL Server 2025 Enterprise HA/DR trên EC2, SLO 99.95%, không partition/NoSQL, release gate 100.000 CCU và loại voucher khỏi baseline. Các mục còn cần xác nhận bên ngoài được ghi rõ là điều kiện go-live, không phải quyết định nghiệp vụ còn mở.

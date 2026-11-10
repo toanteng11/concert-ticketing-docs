@@ -109,11 +109,28 @@ Dự án thống nhất sử dụng bộ công cụ và công nghệ chuẩn hó
 | **Thiết kế Sơ đồ Kỹ thuật (UML)** | **Astah (Astah Professional / UML)**| Vẽ toàn bộ sơ đồ Use Case, Sequence, State Machine, Class, Component Diagram |
 | **Kiểm thử Giao diện Lập trình** | **Postman** | Postman Collections, biến môi trường, Pre-request Scripts & Test Assertions tự động |
 | **Quản lý Tiến độ Dự án (Agile)**| **Jira (Jira Software)** | Quản lý Sprint, Epics, User Stories (`US-01-01` đến `US-15-03`), Burndown Chart |
-| **Quản lý Mã nguồn (VCS)** | **GitHub** | Lưu trữ mã nguồn, quy trình GitFlow, Pull Request, Code Review, GitHub Actions CI/CD |
-| **Đóng gói & Môi trường Chạy** | **Docker** | Multi-stage Dockerfile cho Java Spring Boot; Compose local dùng SQL Server 2025 Developer, Redis và RabbitMQ; không có NoSQL trong baseline |
+| **Quản lý Mã nguồn (VCS) & CI/CD** | GitHub + AWS CodePipeline / CodeBuild | GitHub lưu source/PR qua CodeConnections; AWS chạy build/test/deploy EKS |
+| **Đóng gói & Môi trường Chạy** | **Docker** | Multi-stage Dockerfile cho Java Spring Boot; Compose local dùng SQL Server 2025 Developer, Redis và RabbitMQ; production target chạy trên AWS theo D-035 |
 
 ---
 
+## Kiến trúc cloud mục tiêu: AWS
+
+Theo quyết định D-035, lớp cloud của hệ thống dùng AWS. Đây là kiến trúc mục tiêu trong tài liệu, chưa phải hạ tầng đã triển khai hoặc nghiệm thu.
+
+| Lớp | Dịch vụ AWS mục tiêu | Vai trò |
+|---|---|---|
+| DNS, phân phối nội dung, bảo vệ biên | Route 53, CloudFront, AWS WAF | DNS, phân phối nội dung tĩnh, lọc/rate-based rules; API giao dịch không cache công khai |
+| Tiếp nhận ứng dụng | Application Load Balancer (ALB), Amazon EKS, EC2 managed node groups, Amazon ECR | TLS/routing vào ứng dụng Spring Boot; chạy API và Worker |
+| Cache và hàng đợi | Amazon ElastiCache for Redis OSS, Amazon MQ for RabbitMQ | Trạng thái ngắn hạn, lock/cache; xử lý bất đồng bộ và notification |
+| Cơ sở dữ liệu và tệp | SQL Server 2025 Enterprise EC2/EBS Always On AG; S3/KMS/Versioning/Object Lock/CRR; AWS Backup Vault Lock/Restore Testing | SQL PITR và VSS/EBS recovery theo D-026/D-036; mục tiêu còn phải được kiểm thử và ký duyệt |
+| CI/CD | AWS CodePipeline V2, CodeBuild, CodeConnections | GitHub làm source; AWS build/test/deploy EKS, artifact lưu S3/KMS |
+| Quan sát và bảo mật | Amazon CloudWatch, AWS X-Ray, CloudTrail, Config, GuardDuty, Security Hub, IAM, Secrets Manager | Metrics/logs/traces, audit, phát hiện rủi ro và quản lý secrets |
+| Thông báo | Amazon SES, Amazon SNS Mobile Push, AWS End User Messaging SMS | Email, push qua APNs/FCM và SMS; mạng di động/APNs/FCM là điểm giao nhận bên ngoài AWS |
+
+Region/AZ, quota, cấu hình ElastiCache/Amazon MQ/EKS, license SQL Server, chi phí và kết quả benchmark còn phải được xác nhận trước go-live. VNPay, MoMo, OAuth và GitHub source repository vẫn là phụ thuộc ngoài AWS; GitHub chỉ cấp source qua CodeConnections, không chạy workload production. Tài liệu dùng “API Gateway” ở một số chỗ theo nghĩa khái niệm API layer; AWS service ingress được chọn là ALB + Spring Boot, không triển khai Amazon API Gateway trong baseline.
+
+---
 ## 🗺️ Hướng Dẫn Sử Dụng Tài Liệu Để Vẽ Các Sơ Đồ Thiết Kế (Bằng Astah & Figma)
 
 Dành cho các thành viên đội ngũ thiết kế, đồ họa kỹ thuật và kiến trúc sư hệ thống khi thao tác trên **Astah** và **Figma**:
@@ -121,11 +138,11 @@ Dành cho các thành viên đội ngũ thiết kế, đồ họa kỹ thuật v
 | Sơ đồ cần vẽ trên Astah / Figma | Tài liệu nguồn cần đọc | Dữ liệu đầu vào then chốt |
 |---|---|---|
 | **Use Case Diagram (Astah)** | `UC01` đến `UC15` + `02_Actor_Permissions.md` | Bảng phân quyền RBAC, danh sách Use Case con, quan hệ `<<include>>` và `<<extend>>`. |
-| **Sequence Diagrams (Astah)** | `BF02`, `BF03`, `BF06`, `04_RESTful_API...` | Luồng tương tác tuần tự giữa Client $\rightarrow$ Gateway $\rightarrow$ Java Service $\rightarrow$ Redis $\rightarrow$ SQL Server $\rightarrow$ Third-party. |
+| **Sequence Diagrams (Astah)** | BF02, BF03, BF06, 04_RESTful_API... | Client → AWS ALB → Spring Boot API → Amazon ElastiCache for Redis OSS → SQL Server → external payment/identity providers. |
 | **State Machine Diagrams (Astah)** | `SM01` đến `SM05` | 5 vòng đời: Concert, Ghế (Seat), Đơn hàng (Order), Vé (Ticket) và Thanh toán/Hoàn tiền. |
 | **Activity / Flowcharts (Astah)** | `BF01` đến `BF06` | Các bước phân nhánh điều kiện: Hàng chờ, Giữ ghế, Thanh toán, Hủy/hoàn tiền, Duyệt sự kiện, Quét QR. |
 | **Entity Relationship Diagram (Astah)** | 03_ERD_And_Database_Schema_Design.md | 20 bảng nghiệp vụ + transactional outbox (21 bảng); mô hình logic Microsoft SQL Server, PK/FK và ràng buộc. |
-| **High-Level System Architecture (Astah)**| `01_High_Level_Architecture...` | Client → CDN/WAF → Gateway → Modular Monolith + Worker; Redis, RabbitMQ, SQL Server Primary/readable secondary + async DR replica; không có NoSQL. |
+| **High-Level System Architecture (Astah)** | 01_High_Level_Architecture... | Client → Route 53 / CloudFront / AWS WAF → ALB → Amazon EKS (Spring Boot Modular Monolith + Worker); ElastiCache for Redis OSS, Amazon MQ for RabbitMQ, SQL Server trên EC2 Always On AG, S3 và CloudWatch; không có NoSQL. |
 | **UI/UX Wireframes & Prototypes (Figma)** | `UC04`, `UC05`, `UC06`, `UC07`, `UC14` | Giao diện phòng chờ ảo, sơ đồ ghế khán đài SVG trực quan, màn hình thanh toán, mã Dynamic QR. |
 
 ---
@@ -133,7 +150,7 @@ Dành cho các thành viên đội ngũ thiết kế, đồ họa kỹ thuật v
 ## 🌟 Các Chỉ Số Kỹ Thuật Đạt Chuẩn Của Hệ Thống
 
 - **Quy mô người dùng đồng thời đỉnh (Flash-Sale):** $100.000\text{ CCU}$
-- **Thông lượng tiếp nhận API Gateway:** $\ge 35.000\text{ QPS}$
+- **Thông lượng tiếp nhận API:** mục tiêu thiết kế ≥ 35.000 QPS; phải đo bằng benchmark production-like trước go-live (D-030)
 - **SLO khả dụng:** 99.95% mỗi tháng cho critical first-party purchase APIs theo D-027; payment provider được đo riêng; không tuyên bố SLA hợp đồng.
 - **Thời gian giữ ghế tạm thời:** Đúng $600\text{ giây}$ ($10\text{ phút}$)
 - **Tốc độ phản hồi quét vé tại cổng:** $\le 500\text{ ms}$

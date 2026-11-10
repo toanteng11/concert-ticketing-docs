@@ -55,11 +55,11 @@ C4Context
 
     System_Ext(vnpay, "VNPay", "Cổng thanh toán nội địa:\nThẻ ATM, QR Pay, Visa/Mastercard")
     System_Ext(momo, "MoMo", "Ví điện tử &\nCổng thanh toán MoMo")
-    System_Ext(fcm_apns, "FCM / APNs", "Dịch vụ thông báo đẩy\nAndroid (FCM) & iOS (APNs)")
-    System_Ext(email_svc, "Email Service\n(SendGrid / SES)", "Gửi email xác nhận,\nvé điện tử, thông báo")
-    System_Ext(sms_svc, "SMS Gateway\n(Twilio / VNPT SMS)", "Gửi OTP xác thực,\nthông báo SMS")
+    System_Ext(push_svc, "Amazon SNS Mobile Push", "Phân phối push tới APNs/FCM; delivery endpoint của nền tảng di động")
+    System_Ext(email_svc, "Email Service\n(Amazon SES)", "Gửi email xác nhận,\nvé điện tử, thông báo")
+    System_Ext(sms_svc, "AWS End User Messaging SMS", "Gửi OTP xác thực và SMS; carrier là mạng giao nhận")
     System_Ext(id_provider, "Identity Provider\n(Google / Apple ID)", "Đăng nhập OAuth2/OIDC\ntừ bên thứ ba")
-    System_Ext(cdn, "CDN\n(Cloudflare)", "Phục vụ tài nguyên tĩnh,\nWAF, Waiting Room Edge")
+    System_Ext(cdn, "CDN\n(AWS CloudFront / WAF)", "Phục vụ tài nguyên tĩnh,\nWAF, Waiting Room Edge")
 
     Rel(customer, cts, "Xem concert, vào phòng chờ,\nchọn ghế, thanh toán, nhận vé QR", "HTTPS / WebSocket")
     Rel(organizer, cts, "Tạo concert, thiết kế sơ đồ,\ntheo dõi dashboard", "HTTPS")
@@ -68,11 +68,11 @@ C4Context
 
     Rel(cts, vnpay, "Khởi tạo giao dịch thanh toán\n& nhận IPN webhook", "HTTPS API")
     Rel(cts, momo, "Khởi tạo giao dịch thanh toán\n& nhận IPN webhook", "HTTPS API")
-    Rel(cts, fcm_apns, "Gửi push notification:\nhàng chờ, thanh toán, vé", "HTTPS API")
+    Rel(cts, push_svc, "Gửi push notification:\nhàng chờ, thanh toán, vé", "HTTPS API")
     Rel(cts, email_svc, "Gửi email xác nhận đơn hàng,\nvé điện tử, hoàn tiền", "SMTP / API")
     Rel(cts, sms_svc, "Gửi OTP đăng ký,\nthông báo hết vé/hủy concert", "HTTP API")
     Rel(id_provider, cts, "Cung cấp OAuth2 Token\nđể xác thực người dùng", "OAuth2 / OIDC")
-    Rel(cdn, cts, "Proxy request, WAF filter,\nWaiting Room Edge Logic", "TCP / HTTPS")
+    Rel(cdn, cts, "CloudFront delivery and AWS WAF filtering; Waiting Room decisions run in the application on EKS", "HTTPS")
 ```
 
 ---
@@ -217,16 +217,16 @@ graph TB
         direction LR
         VNP["VNPay API"]
         MOM["MoMo API"]
-        FCM["Firebase FCM / APNs"]
-        SG["SendGrid / AWS SES"]
-        SMS["Twilio / VNPT SMS"]
+        SNS["Amazon SNS Mobile Push → APNs / FCM"]
+        SES["Amazon SES"]
+        SMS["AWS End User Messaging SMS"]
         GG["Google / Apple OAuth2"]
-        CF["Cloudflare CDN / WAF"]
+        CF["Route 53 / CloudFront / AWS WAF"]
     end
 
     CTS <-->|"Thanh toán:\nGọi API + Nhận IPN Webhook"| VNP
     CTS <-->|"Thanh toán:\nGọi API + Nhận IPN Webhook"| MOM
-    CTS -->|"Gửi push notification"| FCM
+    CTS -->|"Gửi push notification"| SNS
     CTS -->|"Gửi email vé & thông báo"| SG
     CTS -->|"Gửi SMS OTP & nhắc nhở"| SMS
     GG -->|"Cung cấp Access Token\nOAuth2 OIDC"| CTS

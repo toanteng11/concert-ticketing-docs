@@ -15,20 +15,20 @@ Tài liệu này đặc tả cơ chế kỹ thuật bảo đảm **Tuyệt đố
 Để ngăn chặn hàng nghìn người cùng chọn một ghế tại cùng một mili-giây, hệ thống áp dụng cơ chế khóa phân tán hai tầng (**Two-Tier Distributed Locking**):
 
 ### 1. Tầng Khóa Siêu Tốc (Fast In-Memory Lock - Redis)
-Mỗi ghế được đại diện bởi một khóa duy nhất trong Redis Cluster:
+Mỗi ghế được đại diện bởi một khóa duy nhất trong Amazon ElastiCache for Redis OSS:
 - Định dạng khóa: `lock:seat:{concert_id}:{seat_id}`
 - Giá trị khóa: `user_id:{hold_session_token}`
-- Thời gian sống (TTL): Đúng $600\text{ giây}$ (10 phút).
+- Thời gian sống (TTL): Đúng $300\text{ giây}$ (5 phút).
 
 Lệnh thực thi nguyên tử:
 ```redis
-SET lock:seat:con_102:seat_888 "usr_555:tok_abc123" NX EX 600
+SET lock:seat:con_102:seat_888 "usr_555:tok_abc123" NX EX 300
 ```
 - `NX`: Chỉ thiết lập khóa nếu khóa này **CHƯA TỒN TẠI** (Not eXists). Nếu ghế đã bị người khác chọn trước dù chỉ 1 phần triệu giây, lệnh trả về `nil` (Thất bại) ngay lập tức.
-- `EX 600`: Tự động thu hồi khóa sau 600 giây để phòng ngừa trường hợp người dùng đóng trình duyệt hoặc mất kết nối mạng.
+- `EX 300`: Tự động thu hồi khóa sau 300 giây (5 phút) để phòng ngừa trường hợp người dùng đóng trình duyệt hoặc mất kết nối mạng.
 
 ### 2. Thu Hồi Khóa An Toàn Bằng Lua Script (Atomic Lock Release)
-Nghiêm cấm việc xóa trực tiếp khóa bằng lệnh `DEL` thông thường, vì nếu người dùng A giữ ghế quá 10 phút, khóa tự hết hạn và người dùng B vừa nhận được khóa, việc người dùng A bấm nút "Hủy ghế" có thể vô tình xóa nhầm khóa của người dùng B.
+Nghiêm cấm việc xóa trực tiếp khóa bằng lệnh `DEL` thông thường, vì nếu người dùng A giữ ghế quá 5 phút, khóa tự hết hạn và người dùng B vừa nhận được khóa, việc người dùng A bấm nút "Hủy ghế" có thể vô tình xóa nhầm khóa của người dùng B.
 
 Hệ thống sử dụng đoạn kịch bản **Lua Script** nguyên tử chạy trực tiếp trong Redis để đối chiếu quyền sở hữu trước khi xóa:
 ```lua
@@ -49,11 +49,11 @@ Redis và SQL Server không tham gia chung một distributed transaction. Luồn
 
 ### Bước 1: Giữ ghế tạm thời
 1. **Bước 1.1:** Người dùng bấm chọn 1–4 ghế trên sơ đồ.
-2. **Bước 1.2:** Service gọi lệnh Redis `SET NX EX 600` cho toàn bộ các ghế được chọn trong một lệnh Multi-Exec hoặc Lua Script tổng thể. Nếu có bất kỳ ghế nào thất bại $\rightarrow$ Hủy bỏ toàn bộ (All-or-Nothing).
+2. **Bước 1.2:** Service gọi lệnh Redis `SET NX EX 300` cho toàn bộ các ghế được chọn trong một lệnh Multi-Exec hoặc Lua Script tổng thể. Nếu có bất kỳ ghế nào thất bại $\rightarrow$ Hủy bỏ toàn bộ (All-or-Nothing).
 3. **Bước 1.3:** Khi Redis xác nhận khóa thành công, Service ghi bản ghi vào cơ sở dữ liệu SQL Server:
    ```sql
    INSERT INTO seat_holds (id, user_id, seat_id, concert_id, hold_token, expires_at, status)
-    VALUES ('00000000-0000-0000-0000-000000000101', '00000000-0000-0000-0000-000000000555', '00000000-0000-0000-0000-000000000888', '00000000-0000-0000-0000-000000000777', 'hold-token-101', DATEADD(SECOND, 600, SYSUTCDATETIME()), 'ACTIVE');
+    VALUES ('00000000-0000-0000-0000-000000000101', '00000000-0000-0000-0000-000000000555', '00000000-0000-0000-0000-000000000888', '00000000-0000-0000-0000-000000000777', 'hold-token-101', DATEADD(SECOND, 300, SYSUTCDATETIME()), 'ACTIVE');
    ```
 4. **Bước 1.4:** Hệ thống phát sự kiện WebSocket tới tất cả người dùng khác đang xem sơ đồ ghế: Chuyển màu ghế sang **Màu Vàng (Đang được giữ)**.
 
@@ -72,10 +72,10 @@ Redis và SQL Server không tham gia chung một distributed transaction. Luồn
    -- 3. Cập nhật bản ghi giữ ghế sang COMPLETED
    UPDATE seat_holds SET status = 'COMPLETED' WHERE id = '00000000-0000-0000-0000-000000000101';
    
-   -- 4. Cập nhật đơn hàng sang PAID và tạo vé điện tử
+   -- 4. Cập nhật đơn hàng sang PAID và tạo vé điện tử (gắn thông tin người sử dụng vé)
    UPDATE orders SET status = 'PAID' WHERE id = '00000000-0000-0000-0000-000000000123';
-   INSERT INTO tickets (id, order_id, seat_id, qr_code_hash, status)
-   VALUES ('00000000-0000-0000-0000-000000000999', '00000000-0000-0000-0000-000000000123', '00000000-0000-0000-0000-000000000888', 'hash_xyz', 'ORDERED');
+   INSERT INTO tickets (id, order_id, seat_id, qr_code_hash, status, attendee_name, attendee_phone, attendee_id_number)
+   VALUES ('00000000-0000-0000-0000-000000000999', '00000000-0000-0000-0000-000000000123', '00000000-0000-0000-0000-000000000888', 'hash_xyz', 'ORDERED', N'Nguyễn Văn A', '0901234567', '001200001234');
    COMMIT TRANSACTION;
    ```
 4. **Bước 2.4:** Xóa khóa tạm thời trong Redis và cập nhật trạng thái cache ghế sang `SOLD` vĩnh viễn (Màu Đỏ).
@@ -85,10 +85,10 @@ Redis và SQL Server không tham gia chung một distributed transaction. Luồn
 ## 4. Xử Lý Điều Kiện Tranh Chấp Đặc Biệt: Thanh Toán Đến Muộn Sau Khi Hết Hạn Giữ Ghế (Late Payment Race Condition)
 
 Đây là kịch bản ngoại lệ nguy hiểm nhất trong thương mại điện tử bán vé sự kiện:
-- **Thời điểm 09:59:** Khách hàng A đang ở cổng thanh toán VNPay và quét mã QR ngân hàng.
-- **Thời điểm 10:00:** Đúng 10 phút hết hạn, Redis TTL hết hiệu lực, hệ thống tự động giải phóng ghế `seat_888` về trạng thái `AVAILABLE`.
-- **Thời điểm 10:01:** Khách hàng B nhanh tay chọn và giữ thành công ghế `seat_888`.
-- **Thời điểm 10:02:** Cổng VNPay gửi Webhook thông báo Khách hàng A đã trừ tiền thành công $2.000.000\text{ VNĐ}$ cho đơn hàng của ghế `seat_888`.
+- **Thời điểm 04:59:** Khách hàng A đang ở cổng thanh toán VNPay và quét mã QR ngân hàng.
+- **Thời điểm 05:00:** Đúng 5 phút hết hạn, Redis TTL hết hiệu lực, hệ thống tự động giải phóng ghế `seat_888` về trạng thái `AVAILABLE`.
+- **Thời điểm 05:01:** Khách hàng B nhanh tay chọn và giữ thành công ghế `seat_888`.
+- **Thời điểm 05:02:** Cổng VNPay gửi Webhook thông báo Khách hàng A đã trừ tiền thành công $2.000.000\text{ VNĐ}$ cho đơn hàng của ghế `seat_888`.
 
 ### Quy tắc xử lý đã chốt (D-016, D-032, D-033):
 Khi callback/reconciliation xác nhận thanh toán của đơn `ord_A`: hold đã hết hạn nên không fulfill và không hồi sinh ghế.
@@ -138,12 +138,12 @@ sequenceDiagram
   participant PG as VNPay or MoMo
   participant Q as Message Broker
   C->>API: Hold seats with queue token
-  API->>R: SET NX EX 600 with hold token
+  API->>R: SET NX EX 300 with hold token
   alt lock acquired
     API->>DB: Conditional seat update and seat_holds transaction
     alt SQL commit succeeds
       DB-->>API: Hold persisted
-      API-->>C: Hold confirmed; expiry fixed at first selection + 600s
+      API-->>C: Hold confirmed; expiry fixed at first selection + 300s
     else SQL write fails after Redis lock
       API->>R: Lua release only if lock token matches
       API-->>C: Retryable failure; reconciler checks ACTIVE holds

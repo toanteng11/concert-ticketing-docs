@@ -8,7 +8,7 @@ Hệ thống bán vé sự kiện âm nhạc phục vụ người dùng trên đ
 
 Mục tiêu kỹ thuật của tài liệu này:
 1. Thiết lập kiến trúc **API-First & Headless**: Toàn bộ các nền tảng khách hàng giao tiếp thống nhất qua một chuẩn RESTful API & WebSocket chung.
-2. Thiết kế chiến lược bộ đệm đa tầng (**Multi-Tier Caching Architecture**): Bộ đệm tại máy khách (Client Cache), Bộ đệm mạng phân phối (Edge CDN Cache), Bộ đệm dịch vụ trung gian (API Gateway Cache) và Bộ đệm dữ liệu nóng (Redis In-Memory Cache).
+2. Thiết kế chiến lược bộ đệm đa tầng (**Multi-Tier Caching Architecture**): Bộ đệm tại máy khách (Client Cache), Bộ đệm mạng phân phối (Edge CDN Cache), Bộ đệm biên Amazon CloudFront (chỉ nội dung đủ điều kiện) và Bộ đệm dữ liệu nóng (Redis In-Memory Cache).
 3. Đảm bảo tính nhất quán dữ liệu (Data Consistency), chống hiện tượng đọc phải dữ liệu rác/lỗi thời (Stale Data) nhưng vẫn triệt tiêu được $90\%+$ tải đọc trên cơ sở dữ liệu gốc.
 
 ---
@@ -37,7 +37,7 @@ Mục tiêu kỹ thuật của tài liệu này:
 | Yếu tố kỹ thuật | Web Desktop / Mobile Web | Mobile App (iOS / Android) | Thiết bị Staff Check-In |
 |---|---|---|---|
 | **Cơ chế tải ứng dụng ban đầu** | Tải SPA Bundle qua CDN; nén Brotli | Cài đặt nhị phân từ App Store / Google Play | Cài đặt gói APK doanh nghiệp (Enterprise MDM) |
-| **Kênh thông báo đẩy** | Web Push API (Service Worker) | Apple Push Notification (APNs) & Firebase (FCM) | Âm thanh & Rung phần cứng tức thì |
+| **Kênh thông báo đẩy** | Web Push API (Service Worker) | Amazon SNS Mobile Push tới APNs/FCM | Âm thanh & rung theo khả năng thiết bị |
 | **Lưu trữ ngoại tuyến** | Cache tài nguyên không nhạy cảm; không làm nguồn sự thật giao dịch | Có thể xem tài liệu vé đã lưu; không xác thực check-in ngoại tuyến | Không lưu trạng thái vé để quét offline; fail-closed theo D-023 |
 | **Bảo mật sinh trắc học** | WebAuthn / Passkeys (Tùy chọn) | FaceID / Fingerprint để xác thực giao dịch nhanh | Khóa thiết bị theo Device ID phần cứng |
 
@@ -55,10 +55,10 @@ flowchart LR
   client["Web / Mobile / Staff client"]
   c1["1. Client cache<br/>immutable assets, ETag"]
   c2["2. Edge CDN<br/>public static/semi-static content"]
-  c3["3. Gateway cache<br/>eligible public GET responses"]
-  c4["4. Redis Cluster<br/>short-lived application data and locks"]
+  c3["3. Spring Boot application cache<br/>eligible public GET responses"]
+  c4["4. Amazon ElastiCache for Redis OSS<br/>queue state and distributed locks"]
   db[("SQL Server<br/>authoritative data")]
-  origin["Object Storage origin"]
+  origin["Amazon S3 origin via CloudFront OAC"]
   write["Concert update / cacheable data write"]
   purge["Purge / invalidate affected cache keys"]
   client --> c1 --> c2 --> c3 --> c4 --> db
@@ -80,9 +80,9 @@ flowchart LR
 | Tầng bộ đệm | Công nghệ sử dụng | Loại dữ liệu lưu trữ | Thời gian lưu (TTL) | Cơ chế xóa / Cập nhật (Invalidation) |
 |---|---|---|---|---|
 | **Tầng 1: Client Cache** | Trình duyệt / Ứng dụng di động | Bundle JS/CSS, Fonts, Ảnh poster, Cấu trúc sơ đồ ghế tĩnh | Tĩnh: 1 năm; API: 0 – 60s | Cache-Control headers, ETag validation, Version hash |
-| **Tầng 2: Edge CDN** | Cloudflare / AWS CloudFront | Trang chủ, Chi tiết concert công khai, Bản đồ rạp SVG | 60s đến 30 ngày | Cloudflare API Purge by Cache-Tag khi sự kiện thay đổi |
-| **Tầng 3: Gateway Cache** | Kong Proxy Cache Plugin | Kết quả tìm kiếm concert, Danh sách nghệ sĩ, Metadata | 10s đến 120s | LRU (Least Recently Used) tự động thu hồi khi tràn RAM |
-| **Tầng 4: Redis Cluster** | Redis In-Memory Cluster | Vị trí hàng chờ, Khóa ghế (`SETNX`), Token phiên, Rate limits | 3s đến 24 giờ | Chủ động xóa bằng lệnh `DEL` ngay khi có sự kiện ghi |
+| **Tầng 2: Edge CDN** | Amazon CloudFront + AWS WAF | Trang chủ, Chi tiết concert công khai, Bản đồ rạp SVG | 60s đến 30 ngày | CloudFront invalidation by path or versioned URL khi sự kiện thay đổi |
+| **Tầng 3: Application Cache** | Spring Boot in-process cache; ALB does not cache responses | Kết quả tìm kiếm concert, Danh sách nghệ sĩ, Metadata | 10s đến 120s | Eviction theo policy ứng dụng; dữ liệu giao dịch không lấy cache làm nguồn sự thật |
+| **Tầng 4: Amazon ElastiCache for Redis OSS** | ElastiCache replication group | Vị trí hàng chờ, khóa ghế (SET NX), token phiên, rate limits | 3 giây đến 24 giờ | Xóa/chỉnh cache khi có sự kiện ghi; SQL Server giữ trạng thái giao dịch có thẩm quyền |
 
 <!-- BEGIN MERMAID DIAGRAM NFR-CACHE -->
 ### Luồng cache miss và vô hiệu hóa cache
@@ -91,8 +91,8 @@ flowchart LR
 flowchart LR
   request["Eligible public read request"] --> client["Client cache"]
   client -->|miss / revalidate| cdn["Edge CDN"]
-  cdn -->|miss| gateway["Gateway response cache"]
-  gateway -->|miss| redis["Redis cache"]
+  cdn -->|miss| gateway["Spring Boot in-process cache on EKS"]
+  gateway -->|miss| redis["Amazon ElastiCache for Redis OSS"]
   redis -->|miss| db[("SQL Server read source")]
   organizer["Concert data update"] --> primary[("SQL Server Primary")]
   primary --> invalidate["Invalidate affected cache keys / cache tags"]
@@ -109,7 +109,7 @@ flowchart LR
 
 ## 4. Chính Sách Tiêu Đề Bộ Đệm HTTP (HTTP Caching Headers Policy)
 
-Để kiểm soát hành vi bộ đệm của trình duyệt và CDN một cách chặt chẽ, API Gateway tự động gắn các tiêu đề HTTP chuẩn hóa theo từng nhóm endpoint:
+Để kiểm soát hành vi bộ đệm của trình duyệt và CDN một cách chặt chẽ, Ứng dụng gắn Cache-Control theo loại endpoint; CloudFront dùng cache policy riêng cho nội dung công khai đủ điều kiện theo từng nhóm endpoint:
 
 ### 1. Tài Nguyên Tĩnh Tuyệt Đối (Static Immutable Assets)
 - **Áp dụng cho:** File build frontend (`app.8f9b2c.js`, `styles.4a1e9d.css`), icon, font chữ.
@@ -154,14 +154,14 @@ Hệ thống áp dụng các mô hình xử lý sau:
 - Khi có yêu cầu đọc: Ứng dụng kiểm tra Redis trước. Nếu có (Cache Hit) $\rightarrow$ trả về ngay. Nếu không (Cache Miss) $\rightarrow$ đọc từ SQL Server readable secondary; dùng Primary trong cửa sổ read-your-write, ghi vào Redis với TTL xác định rồi trả về.
 - Khi có thao tác sửa đổi (Organizer cập nhật concert): Service cập nhật Database thành công $\rightarrow$ Phát sự kiện qua RabbitMQ theo D-025 `concert.updated` $\rightarrow$ Worker xóa ngay lập tức key tương ứng trong Redis (`DEL cache:concert:{id}`).
 
-### 2. Vô Hiệu Hóa Mạng Biên Theo Thẻ (Surrogate-Key / Cache-Tag Purging)
+### 2. Vô Hiệu Hóa Mạng Biên Theo Thẻ (Surrogate-Key / Path invalidation / versioned URL)
 - Khi CDN cache thông tin một concert, máy chủ trả kèm tiêu đề:
   ```http
   Cache-Tag: concert-102, organizer-5, category-rock
   ```
 - Khi Admin hoặc Organizer phê duyệt thay đổi thông tin concert #102:
-  - Hệ thống gọi API Cloudflare / CloudFront: `POST /purge_by_tag` với payload `["concert-102"]`.
-  - Toàn bộ các máy chủ biên CDN trên toàn thế giới xóa sạch bản lưu của concert này trong vòng $< 150\text{ ms}$.
+  - Dùng URL versioned; nếu cần xóa sớm, tạo CloudFront invalidation theo path như /concerts/102/*.
+  - Không cam kết thời gian invalidation cố định; ưu tiên URL versioned và đo trong staging.
 
 ### 3. Phòng Ngừa Hiện Tượng Sập Bộ Đệm Hàng Loạt (Cache Stampede / Thundering Herd)
 - Khi một concert cực nóng hết hạn cache trong Redis đúng lúc có 10.000 người cùng truy cập:

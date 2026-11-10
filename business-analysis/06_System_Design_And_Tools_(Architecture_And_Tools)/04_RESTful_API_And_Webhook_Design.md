@@ -5,7 +5,7 @@
 Hệ thống tuân thủ nghiêm ngặt các nguyên tắc thiết kế **RESTful API tiêu chuẩn quốc tế** kết hợp tiêu chuẩn kiến trúc mở (**OpenAPI 3.1 / Swagger**):
 
 ### 1. Cấu Trúc Địa Chỉ Gốc & Phân Bản (Base URL & Versioning)
-- **Production API Gateway:** `https://api.ticketplatform.vn/api/v1`
+- **Production API base URL (CloudFront/ALB ingress):** `https://api.ticketplatform.vn/api/v1`
 - **Staging / Sandbox:** `https://staging-api.ticketplatform.vn/api/v1`
 - **Chiến lược phân bản (Versioning):** Phân bản trực tiếp trên đường dẫn URL (`/api/v1/`, `/api/v2/`) nhằm đảm bảo tính tương thích ngược cho các phiên bản ứng dụng di động cũ chưa kịp cập nhật.
 
@@ -82,7 +82,7 @@ Hệ thống tuân thủ nghiêm ngặt các nguyên tắc thiết kế **RESTfu
 
 ### Nhóm 4: Giữ Ghế Phân Tán (Seat Reservation)
 
-#### `POST /seats/hold` (Khóa Giữ Ghế 10 Phút)
+#### `POST /seats/hold` (Khóa Giữ Ghế 5 Phút)
 - **Tiêu đề bắt buộc:**
   ```http
   Authorization: Bearer <Access_Token>
@@ -108,7 +108,7 @@ Hệ thống tuân thủ nghiêm ngặt các nguyên tắc thiết kế **RESTfu
     "data": {
       "hold_token": "hld_9a8b7c6d5e4f3a2b1c",
       "expires_at": 1729775400,
-      "remaining_seconds": 600,
+      "remaining_seconds": 300,
       "held_seats": [
         { "seat_id": "9f8d7c6b-...01", "row": "A", "number": "12", "price": 2500000 },
         { "seat_id": "9f8d7c6b-...02", "row": "A", "number": "14", "price": 2500000 }
@@ -124,14 +124,28 @@ Hệ thống tuân thủ nghiêm ngặt các nguyên tắc thiết kế **RESTfu
 
 #### `POST /orders/checkout` (Tạo Đơn Hàng & Lấy Link Thanh Toán)
 
-> Checkout baseline theo D-031 không nhận voucher_code; discount_amount trong response luôn bằng 0. Tất cả amount là số nguyên VND.
+> Checkout baseline theo D-031 không nhận voucher_code; discount_amount trong response luôn bằng 0. Tất cả amount là số nguyên VND. Khi mua 2–4 vé, bắt buộc cung cấp mảng `attendees` chứa thông tin từng người sử dụng vé; khi mua 1 vé, nếu bỏ trống thì mặc định dùng thông tin tài khoản người mua (BR-SEAT-009).
 - **Tiêu đề:** `Authorization: Bearer <token>`, `Idempotency-Key: <uuid>`
 - **Request Payload:**
   ```json
   {
     "concert_id": "550e8400-e29b-41d4-a716-446655440000",
     "hold_token": "hld_9a8b7c6d5e4f3a2b1c",
-    "payment_gateway": "VNPAY"
+    "payment_gateway": "VNPAY",
+    "attendees": [
+      {
+        "seat_id": "9f8d7c6b-4e3a-4a1e-8b9c-1a2b3c4d5e01",
+        "full_name": "Nguyễn Văn A",
+        "phone_number": "0901234567",
+        "id_number": "001200001234"
+      },
+      {
+        "seat_id": "9f8d7c6b-4e3a-4a1e-8b9c-1a2b3c4d5e02",
+        "full_name": "Trần Thị B",
+        "phone_number": "0912345678",
+        "id_number": null
+      }
+    ]
   }
   ```
 - **Phản hồi thành công (`201 Created`):**
@@ -229,10 +243,11 @@ sequenceDiagram
   actor C as Customer
   participant API as Order / Payment API
   participant DB as SQL Server Primary
+  participant SEC as SQL Synchronous Secondary
   participant PG as VNPay or MoMo
   participant T as Ticket Module
   participant MQ as Message Broker
-  C->>API: POST /orders with Idempotency-Key
+  C->>API: POST /orders/checkout with Idempotency-Key & attendees
   API->>DB: Insert PENDING order and payment attempt
   API->>PG: Create payment request
   PG-->>C: Redirect to payment page
@@ -241,14 +256,16 @@ sequenceDiagram
   alt invalid signature or amount
     API-->>PG: Reject / provider-defined error response
   else duplicate callback already applied
-    API->>DB: Read idempotent transaction result
-    API-->>PG: Acknowledge without duplicate fulfillment
+    API->>DB: Check payment_idempotency_log
+    API-->>PG: Acknowledge without duplicate fulfillment (200 OK)
   else verified payment success
-    API->>DB: Transactionally mark payment and order PAID
-    API->>T: Issue ticket for each order item
-    API->>DB: Commit ticket state
-    API->>MQ: Publish notification event after successful commit
-    API-->>PG: Acknowledge success
+    API->>DB: BEGIN TRANSACTION:\n- Mark payment SUCCESS\n- Mark order PAID\n- Mark seats SOLD\n- Insert tickets (with attendee_name/phone)\n- Insert outbox_events\n- Insert payment_idempotency_log
+    DB->>SEC: Synchronous log replication
+    SEC-->>DB: Log hardened ACK
+    DB-->>API: COMMIT confirmed
+    API-->>PG: Acknowledge success (200 OK)
+    API->>MQ: Outbox publisher sends events to RabbitMQ
+    MQ-->>C: Push notification / WebSocket order confirmation
   end
 ```
 <!-- END MERMAID DIAGRAM DESIGN-WEBHOOK-SEQUENCE -->

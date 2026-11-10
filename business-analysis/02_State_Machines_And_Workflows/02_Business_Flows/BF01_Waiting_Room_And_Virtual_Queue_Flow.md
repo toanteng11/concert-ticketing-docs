@@ -45,10 +45,10 @@ timeline
 ```mermaid
 sequenceDiagram
     actor C as Khách hàng
-    participant CDN as CDN Edge<br/>(Cloudflare Waiting Room)
+    participant EDGE as CloudFront + AWS WAF
     participant WR as Waiting Room Service
     participant AUTH as Auth Service
-    participant REDIS as Redis Cluster
+    participant REDIS as Amazon ElastiCache for Redis OSS
 
     Note over WR: Scheduler phát hiện:<br/>current_time >= sale_start_time - 15m<br/>→ Kích hoạt phòng chờ concert_id
     WR->>REDIS: SET waitingroom:{concert_id}:active = true EX {15m+duration}
@@ -74,7 +74,7 @@ sequenceDiagram
 sequenceDiagram
     participant SCHED as Scheduler<br/>(Cron job)
     participant WR as Waiting Room Service
-    participant REDIS as Redis Cluster
+    participant REDIS as Amazon ElastiCache for Redis OSS
     participant WS as WebSocket Server
     participant C1 as Khách hàng 1
     participant C2 as Khách hàng 2
@@ -128,8 +128,8 @@ flowchart TD
 sequenceDiagram
     actor C as Khách hàng
     participant APP as Web/Mobile App
-    participant API as API Gateway
-    participant REDIS as Redis Cluster
+    participant API as Spring Boot API (behind ALB)
+    participant REDIS as Amazon ElastiCache for Redis OSS
     participant WS as WebSocket Server
 
     Note over C,APP: User đang trong khu chọn ghế (có Access Token)
@@ -165,7 +165,7 @@ sequenceDiagram
 
 | Loại gian lận | Biểu hiện | Biện pháp đối phó |
 |---|---|---|
-| **F5 Spam / Click bot** | Gửi hàng nghìn request GET `/concerts/{id}` | CDN Rate Limiting (Cloudflare) + `429 Too Many Requests` |
+| **F5 Spam / Click bot** | Gửi hàng nghìn request GET `/concerts/{id}` | AWS WAF rate-based rules / optional Bot Control + `429 Too Many Requests` |
 | **Multi-tab farming** | Mở 10 tab để giữ nhiều vị trí | SETNX Redis: Mỗi `user_id` chỉ có 1 entry trong queue |
 | **Multi-device** | Dùng điện thoại + laptop cùng lúc | Cùng `user_id` → cùng queue position, không được cộng thêm |
 | **Account farming (nhiều nick)** | Tạo nhiều tài khoản ảo | Yêu cầu xác thực SĐT (OTP); 1 SĐT = 1 tài khoản; reCAPTCHA v3 khi đăng ký |
@@ -174,7 +174,75 @@ sequenceDiagram
 
 ---
 
-## 5. API Endpoints Liên Quan (Queue Service API Reference)
+## 5. Ước Tính Thời Gian Chờ FIFO (Estimated Wait Time)
+
+Với những người đến **sau giờ mở bán** và rơi vào hàng chờ FIFO xa (vị trí N trong queue), hệ thống cần tính và hiển thị **ước tính thời gian chờ thực tế** cho họ.
+
+### 5.1 Công Thức Ước Tính
+
+| Biến | Công thức / Nguồn | Ghi chú |
+|---|---|---|
+| `ahead` | `position - current_admission_count` | Số người còn trước trong hàng |
+| `throughput_per_minute` | Rolling window 60 giây gần nhất | Lưu trên Redis, cập nhật mỗi 10 giây |
+| `estimated_wait_seconds` | `(ahead / throughput_per_minute) * 60` | Làm tròn lên phút gần nhất |
+
+**Các sự kiện làm giải phóng slot** (contributes to throughput):
+
+| Sự kiện | Thời gian điển hình |
+|---|---|
+| Thanh toán hoàn tất | ~5 phút (tương đương thời gian hold mới) |
+| Hold ghế hết hạn TTL | ~5 phút |
+| Người dùng thoát / mất heartbeat | ~2 phút inactivity |
+
+**Quy tắc hiển thị kết quả:**
+- `estimated_wait_seconds < 60` → Hiển thị: **"Dưới 1 phút"**
+- `estimated_wait_seconds >= 60` → Làm tròn lên phút gần nhất → Hiển thị: **"Ước tính khoảng N phút"**
+- `ahead > 0` nhưng `throughput = 0` (không ai thoát ra) → Hiển thị: **"Chưa xác định — đang theo dõi..."** (không hiển thị vô cực)
+- Concert hết vé → Hiển thị: **"Vé đã hết"** (thay thế hoàn toàn ô thời gian chờ)
+
+### 5.2 Cơ Chế Cập Nhật & Lưu Trữ
+
+```mermaid
+sequenceDiagram
+    participant REDIS as Amazon ElastiCache for Redis OSS
+    participant QS as Queue Service
+    participant WS as WebSocket Server
+    participant C as Khách hàng (đang chờ FIFO)
+
+    Note over REDIS: Mỗi 10 giây: Queue Service đếm slot<br/>được giải phóng trong 60s gần nhất<br/>→ ghi vào throughput:{concert_id} (rolling window)
+
+    loop Mỗi 30 giây — khi throughput thay đổi
+        QS->>REDIS: GET throughput:{concert_id}
+        REDIS-->>QS: throughput_per_minute = T
+        QS->>REDIS: GET current_admission_count:{concert_id}
+        REDIS-->>QS: current_admission_count = K
+
+        QS->>QS: ahead = position - K<br/>estimated_wait = ceil((ahead / T) * 60) giây
+        QS->>WS: Emit POSITION_UPDATED với estimated_wait fields
+        WS-->>C: {"event": "POSITION_UPDATED", "your_position": N,<br/>"queue_ahead": M, "estimated_wait_minutes": X,<br/>"throughput_per_min": T}
+    end
+
+    Note over C: Khi position còn ≤ 10:<br/>Client hiển thị cảnh báo:<br/>"Bạn sắp đến lượt! Hãy chuẩn bị sẵn sàng."
+```
+
+### 5.3 Business Rules Bổ Sung
+
+> [!NOTE]
+> Hệ thống **không cam kết** thời gian chờ chính xác tuyệt đối — đây là **ước tính nghiệp vụ** dựa trên throughput thực tế và có thể thay đổi theo điều kiện hệ thống.
+
+| Rule ID | Mô tả |
+|---|---|
+| **BR-EWT-001** | `estimated_wait_seconds` = `ceil((ahead / throughput_per_minute) * 60)` |
+| **BR-EWT-002** | Nếu `estimated_wait_seconds < 60` → hiển thị "Dưới 1 phút" |
+| **BR-EWT-003** | Nếu `throughput_per_minute = 0` và `ahead > 0` → hiển thị "Chưa xác định — đang theo dõi..." |
+| **BR-EWT-004** | Nếu concert hết vé → hiển thị "Vé đã hết", không hiển thị EWT |
+| **BR-EWT-005** | Throughput rolling window 60 giây, Redis key cập nhật mỗi 10 giây |
+| **BR-EWT-006** | Cập nhật EWT tới client mỗi 30 giây khi throughput thay đổi |
+| **BR-EWT-007** | Khi `position ≤ 10`: gửi cảnh báo "Bạn sắp đến lượt! Hãy chuẩn bị sẵn sàng." |
+
+---
+
+## 6. API Endpoints Liên Quan (Queue Service API Reference)
 
 | Method | Endpoint | Auth | Mô tả |
 |---|---|---|---|
@@ -191,7 +259,7 @@ sequenceDiagram
 | `WAITING_ROOM_OPEN` | `{countdown: 900, total_waiting: N}` | Phòng chờ vừa mở |
 | `QUEUE_POSITION_ASSIGNED` | `{your_position: N, total_queue: M}` | Số thứ tự được cấp sau shuffle |
 | `YOUR_TURN` | `{access_token: "...", expires_in: 120}` | Đến lượt vào khu chọn ghế |
-| `POSITION_UPDATED` | `{your_position: N}` | Vị trí cập nhật (người trước rời đi) |
+| `POSITION_UPDATED` | `{your_position: N, queue_ahead: M, estimated_wait_minutes: X, throughput_per_min: T}` | Vị trí cập nhật; `estimated_wait_minutes` hiển thị "Ước tính khoảng N phút" (ẩn các field kỹ thuật còn lại) |
 | `SALE_SOLD_OUT` | `{message: "Đã hết vé"}` | Hết vé, hàng chờ đóng |
 | `SESSION_EXPIRED` | `{reason: "INACTIVITY_TIMEOUT"}` | Phiên hết hạn do không hoạt động |
 

@@ -105,7 +105,7 @@ Tài liệu này định nghĩa thống nhất tất cả thuật ngữ, trạng
 | **Webhook Callback** | Callback webhook | HTTP POST mà payment provider gửi đến endpoint `/payment/callback` của hệ thống khi giao dịch hoàn tất. Phải validate chữ ký và xử lý idempotent. |
 | **Signed URL** | URL có chữ ký | URL CDN chứa token chữ ký + thời hạn hết hạn. Dùng để serve file vé/QR image — chỉ người có link mới xem được, và chỉ trong thời hạn. |
 | **JWT** | JSON Web Token | Token stateless sau đăng nhập. Payload: `{user_id, role, iat, exp}`. Server verify bằng secret key. Gửi qua header `Authorization: Bearer <token>`. |
-| **RBAC** | Kiểm soát theo vai trò | Hệ thống phân quyền: mỗi role (CUSTOMER, ORGANIZER, ADMIN, STAFF) có tập permission cố định. API gateway enforce RBAC trước khi route request. |
+| **RBAC** | Kiểm soát theo vai trò | Hệ thống phân quyền: mỗi role (CUSTOMER, ORGANIZER, ADMIN, STAFF) có tập permission cố định. Spring Boot API enforce RBAC sau khi ALB định tuyến request. |
 | **CAP Theorem** | Định lý CAP | Hệ thống phân tán chỉ đảm bảo được 2/3: Consistency, Availability, Partition Tolerance. Hệ thống này chọn **CP** — ưu tiên tính nhất quán dữ liệu. |
 | **Horizontal Scaling** | Scale ngang | Tăng số instance/server để xử lý tải; mỗi instance stateless để dễ scale. Ngược với vertical scaling (nâng cấp phần cứng). |
 | **Rate Limiting** | Giới hạn tốc độ | Giới hạn số request/IP hoặc /user trong khoảng thời gian. Áp dụng chặt tại `/login`, `/payment`, `/seat-hold`. |
