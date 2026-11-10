@@ -78,14 +78,15 @@ sequenceDiagram
 
     Note over C,WR: Giai đoạn 1: Xếp Hàng Công Bằng
     C->>WR: Truy cập trước T-15m -> Vào Phòng Chờ Ảo
-    WR-->>C: Đếm ngược về T0; Hiển thị số người đang đợi
-    Note over WR: T0: Shuffle ngẫu nhiên; Cấp số thứ tự<br/>Người đến sau T0: Nối hàng FIFO + Báo giờ chờ ước tính
+    WR-->>C: Đếm ngược về T0, hiển thị số người đang đợi
+
+    WR-->>C: T0: Shuffle ngẫu nhiên, cấp số thứ tự. Người đến sau T0 nối hàng FIFO và nhận giờ chờ ước tính
     WR->>C: Cấp Queue Access Token (Thời hạn 120s thao tác)
 
     Note over C,SEAT: Giai đoạn 2: Giữ Ghế & Điền Thông Tin
     C->>SEAT: Chọn 1-4 ghế khả dụng (AVAILABLE)
     SEAT->>SEAT: Khóa giữ ghế 5 PHÚT (300 giây) — Đếm lùi 05:00
-    SEAT-->>C: Ghế chuyển vàng (HELD); Bắt đầu tính giờ
+    SEAT-->>C: Ghế chuyển vàng (HELD), bắt đầu tính giờ
 
     C->>ATT: Tiến hành điền Thông Tin Người Dùng Vé (BR-SEAT-009)
     alt Mua 1 vé
@@ -99,7 +100,8 @@ sequenceDiagram
     C->>PAY: Chọn VNPay/MoMo -> Chuyển hướng thanh toán (Tối đa 5 phút)
     C->>PAY: Xác thực OTP / Ví điện tử thành công
     PAY->>DB: Gửi IPN Webhook (Server-to-Server)
-    Note over DB: 1. Verify HMAC & Idempotency Key<br/>2. Ghi PRIMARY (Atomic Transaction)<br/>3. Replicate sang SYNCHRONOUS SECONDARY<br/>4. Secondary ACK -> Primary mới COMMIT
+
+    DB->>DB: Verify HMAC và Idempotency Key, ghi Primary trong một transaction, replicate đồng bộ sang Secondary, chỉ COMMIT sau khi Secondary ACK
     DB-->>PAY: Trả mã 200 OK cho Cổng
     DB->>TCK: Outbox Publisher phát hành vé QR Động
 
@@ -175,16 +177,16 @@ flowchart TD
     U1["Khách A bấm ghế A-12"] --> API["POST /seats/hold"]
     U2["Khách B bấm ghế A-12"] --> API
 
-    subgraph TANG1["Tầng 1: Redis Distributed Lock (Siêu Tốc < 5ms)"]
+    subgraph TANG1["Tầng 1: Redis Distributed Lock (dưới 5 ms)"]
         API --> REDIS{"SETNX lock:seat:A-12<br/>user_id EX 300"}
-        REDIS -->|Thành công (Đến trước 1ms)| WINNER["Khách A giành được Lock"]
-        REDIS -->|Thất bại (Key đã tồn tại)| LOSER["Khách B nhận 409 Conflict<br/>'Ghế vừa bị người khác chọn'"]
+        REDIS -->|"Thành công (đến trước 1 ms)"| WINNER["Khách A giành được Lock"]
+        REDIS -->|"Thất bại (key đã tồn tại)"| LOSER["Khách B nhận 409 Conflict<br/>Ghế vừa bị người khác chọn"]
     end
 
     subgraph TANG2["Tầng 2: SQL Server Conditional Update (Bền Vững ACID)"]
         WINNER --> SQL["UPDATE seats SET status='HELD', hold_user_id='A'<br/>WHERE id='A-12' AND status='AVAILABLE'"]
-        SQL -->|Affected rows = 1| SUCCESS["Giữ ghế thành công!<br/>Broadcast WebSocket đổi vàng"]
-        SQL -->|Affected rows = 0| FAIL["Xung đột dữ liệu -> Rollback & nhả Redis"]
+        SQL -->|"Affected rows = 1"| SUCCESS["Giữ ghế thành công!<br/>Broadcast WebSocket đổi vàng"]
+        SQL -->|"Affected rows = 0"| FAIL["Xung đột dữ liệu -> Rollback và nhả Redis"]
     end
 ```
 
@@ -259,7 +261,7 @@ sequenceDiagram
     SecDB->>SecDB: Hardened Log xuống ổ cứng độc lập tại AZ-B
     SecDB-->>PriDB: Gửi tín hiệu xác nhận (Replication ACK)
     
-    Note over PriDB: 5. Chỉ khi Secondary đã lưu an toàn,<br/>Primary mới thực hiện COMMIT Transaction!
+    Note over PriDB,SecDB: Chỉ khi Secondary đã lưu an toàn thì Primary mới COMMIT transaction
     PriDB-->>API: Transaction Commit Thành Công 100%
     
     API->>Cache: 6. Ghi nhận Idempotency DONE (TTL 24h) & Nhả Lock
@@ -316,7 +318,7 @@ flowchart TD
     SCAN["Nhân viên quét mã QR tại cổng"] --> VERIFY{"1. Xác minh chữ ký RS256\nbằng Public Key cài trong máy?"}
     VERIFY -->|Sai chữ ký| FAKE["❌ CÒI BÁO ĐỘNG ĐỎ\nVé Giả Mạo — Giữ Người!"]
     VERIFY -->|Đúng chữ ký| TIME{"2. Token còn hạn?\n(now <= exp)"}
-    TIME -->|Hết hạn > 60s| EXPIRED["⚠️ MÃ HẾT HẠN\nYêu cầu khách mở App lấy mã mới"]
+    TIME -->|"Hết hạn quá 60 giây"| EXPIRED["⚠️ MÃ HẾT HẠN\nYêu cầu khách mở App lấy mã mới"]
     TIME -->|Còn hạn| API["3. Gửi API Check-in trực tuyến\nPOST /api/v1/check-in/scan"]
     
     API --> STATUS{"Trạng thái vé trên DB?"}
@@ -338,7 +340,7 @@ Khách hàng có thể có việc đột xuất và muốn trả lại vé. Nề
 ```mermaid
 timeline
     title Biểu Phí Hoàn Tiền Vé Tự Nguyện (Tính theo múi giờ địa phương sự kiện)
-    Trước ngày diễn >= 7 ngày : Hoàn tiền 100% giá vé gốc : Phí sàn & thuế không hoàn
+    Trước ngày diễn từ 7 ngày trở lên : Hoàn tiền 100% giá vé gốc : Phí sàn & thuế không hoàn
     Trước ngày diễn 3 - 6 ngày : Hoàn tiền 50% giá vé gốc : Vé lập tức thu hồi mở bán lại
     Trước ngày diễn 0 - 2 ngày : 0% - Không chấp nhận hủy : Vé đã sát giờ biểu diễn
 ```
